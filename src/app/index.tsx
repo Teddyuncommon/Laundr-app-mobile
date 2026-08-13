@@ -1,98 +1,325 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
+import { SymbolView } from 'expo-symbols';
+import { createContext, useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  Image,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { laundrApi, providers, serviceCatalog, seedOrders, type LaundrOrder, type Provider, type ServiceKey } from '@/data/laundr-api';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
+const BLUE = '#0967ce';
+const BLUE_DARK = '#0756b3';
+const INK = '#202124';
+const MUTED = '#687284';
+const PAGE = '#f6f8fc';
+const CARD = '#ffffff';
+const SOFT = '#f0f3f8';
+const FONT = Platform.select({
+  ios: 'Avenir LT Std',
+  android: 'Avenir LT Std',
+  web: "'Avenir LT Std', 'Avenir Next', Arial, sans-serif",
+});
+
+type Screen =
+  | 'splash' | 'onboarding' | 'login' | 'signup' | 'accountType' | 'home' | 'filter'
+  | 'provider' | 'service' | 'collection' | 'delivery' | 'schedule' | 'summary' | 'payment'
+  | 'confirmed' | 'orders' | 'track' | 'chat' | 'reviews' | 'profile';
+type NavigationContextValue = { go: (screen: Screen) => void; screen: Screen };
+const NavigationContext = createContext<NavigationContextValue | null>(null);
+type Booking = {
+  provider: Provider;
+  service: ServiceKey;
+  load: number;
+  instructions: string;
+  collection: 'Pickup from me' | "I'll drop off";
+  delivery: 'Deliver to me' | "I'll collect";
+  slot: string;
+  payment: 'EcoCash' | 'Card' | 'Cash on delivery';
+};
+
+const defaultBooking: Booking = {
+  provider: providers[0], service: 'wash', load: 5, instructions: '',
+  collection: 'Pickup from me', delivery: 'Deliver to me', slot: 'Today, 16:00 - 18:00', payment: 'EcoCash',
+};
+
+export default function IndexScreen() {
+  const [screen, setScreen] = useState<Screen>('splash');
+  const [onboarding, setOnboarding] = useState(0);
+  const [booking, setBooking] = useState<Booking>(defaultBooking);
+  const [orders, setOrders] = useState<LaundrOrder[]>(seedOrders);
+  const [selectedOrder, setSelectedOrder] = useState<LaundrOrder>(seedOrders[0]);
+  const [query, setQuery] = useState('');
+  const [filters, setFilters] = useState<string[]>(['Washing', 'Dry Cleaning']);
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+
+  useEffect(() => {
+    const splashTimer = setTimeout(() => setScreen('onboarding'), 1050);
+    laundrApi.listOrders().then(setOrders).catch(() => undefined);
+    return () => clearTimeout(splashTimer);
+  }, []);
+
+  const go = (next: Screen) => setScreen(next);
+  const selectedService = serviceCatalog.find((service) => service.key === booking.service)!;
+  const subtotal = selectedService.price * booking.load;
+  const deliveryFee = (booking.collection === 'Pickup from me' ? 2 : 0) + (booking.delivery === 'Deliver to me' ? 2 : 0);
+  const fee = Number(((subtotal + deliveryFee) * 0.05).toFixed(2));
+  const total = Number((subtotal + deliveryFee + fee).toFixed(2));
+
+  async function confirmBooking() {
+    const created = await laundrApi.createOrder({
+      provider: booking.provider.name, service: selectedService.name, load: booking.load,
+      collection: booking.collection, delivery: booking.delivery, slot: booking.slot,
+      address: '12 Bosman Rd, Mt Pleasant, Harare', payment: booking.payment, total,
+    });
+    setOrders((current) => [created, ...current]);
+    setSelectedOrder(created);
+    go('confirmed');
   }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
+
+  let content: React.ReactNode;
+  if (screen === 'splash') content = <Splash />;
+  else if (screen === 'onboarding') content = <Onboarding step={onboarding} setStep={setOnboarding} complete={() => go('login')} />;
+  else if (screen === 'login' || screen === 'signup') content = <Auth screen={screen} go={go} mode={authMode} setMode={setAuthMode} />;
+  else if (screen === 'accountType') content = <AccountType go={go} />;
+  else if (screen === 'home') content = <Home go={go} orders={orders} />;
+  else if (screen === 'filter') content = <Filter go={go} filters={filters} setFilters={setFilters} />;
+  else if (screen === 'provider') content = <ProviderDetails go={go} provider={booking.provider} />;
+  else if (screen === 'service') content = <SelectService go={go} booking={booking} setBooking={setBooking} subtotal={subtotal} />;
+  else if (screen === 'collection') content = <MethodScreen kind="collection" go={go} booking={booking} setBooking={setBooking} />;
+  else if (screen === 'delivery') content = <MethodScreen kind="delivery" go={go} booking={booking} setBooking={setBooking} />;
+  else if (screen === 'schedule') content = <Schedule go={go} booking={booking} setBooking={setBooking} />;
+  else if (screen === 'summary') content = <Summary go={go} booking={booking} subtotal={subtotal} deliveryFee={deliveryFee} fee={fee} total={total} />;
+  else if (screen === 'payment') content = <Payment go={go} booking={booking} setBooking={setBooking} total={total} pay={confirmBooking} />;
+  else if (screen === 'confirmed') content = <Confirmed go={go} booking={booking} order={selectedOrder} />;
+  else if (screen === 'orders') content = <Orders go={go} orders={orders} open={(order) => { setSelectedOrder(order); go('track'); }} />;
+  else if (screen === 'track') content = <TrackOrder go={go} order={selectedOrder} />;
+  else if (screen === 'chat') content = <Chat go={go} />;
+  else if (screen === 'profile') content = <Profile go={go} />;
+  else content = <Reviews go={go} />;
+
+  return <NavigationContext.Provider value={{ go, screen }}>{content}</NavigationContext.Provider>;
 }
 
-export default function HomeScreen() {
-  return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
-
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
-  );
+function Splash() {
+  return <SafeAreaView style={styles.splash}><StatusBar hidden /><View style={styles.logoLockup}><WasherIcon size={48} color={BLUE} /><Text style={styles.logoText}>Laundr</Text></View></SafeAreaView>;
 }
+
+function Onboarding({ step, setStep, complete }: { step: number; setStep: (value: number) => void; complete: () => void }) {
+  const content = [
+    { title: ['Find laundry ', 'services', ' near you.'], text: 'Discover trusted laundry providers within your area in just a few taps. The app helps you quickly locate nearby services based on your current location, making it easy to compare options, view ratings, and choose the provider that best fits your needs.', label: 'Next' },
+    { title: ['Choose your ', 'Service flow', ''], text: 'Flexible options designed for your schedule. Whether you come to us or you swing by our hub.', label: 'Next' },
+    { title: ['Track your ', 'Laundry', ' easily'], text: 'Stay informed throughout the entire process. The app allows you to track the progress of your laundry from pickup to completion, so you always know when your clothes are being washed, ready for collection, or on their way back to you.', label: 'Get Started' },
+  ][step];
+  return <Page scroll={false} style={styles.onboardPage}>
+    <View style={styles.topBare}><IconButton name="arrow_back" onPress={() => step > 0 && setStep(step - 1)} /></View>
+    {step === 0 ? <DiscoverArt /> : step === 1 ? <FlowArt /> : <TrackArt />}
+    <View style={styles.progressLine}><Dots count={3} active={step} /><Text style={styles.stepText}>Step {step + 1} of 3</Text></View>
+    <Text style={styles.onboardTitle}>{content.title[0]}<Text style={styles.blue}>{content.title[1]}</Text>{content.title[2]}</Text>
+    <Text style={styles.onboardCopy}>{content.text}</Text>
+    <Primary label={content.label} onPress={() => step < 2 ? setStep(step + 1) : complete()} style={styles.onboardButton} />
+  </Page>;
+}
+
+function Auth({ screen, go, mode, setMode }: { screen: Screen; go: (screen: Screen) => void; mode: 'login' | 'signup'; setMode: (mode: 'login' | 'signup') => void }) {
+  const isLogin = screen === 'login';
+  return <Page><View style={styles.authContent}><IconButton name="arrow_back" onPress={() => go('onboarding')} />
+    <Text style={styles.authTitle}>{isLogin ? 'Welcome Back' : 'Create Account'}</Text>
+    <Text style={styles.authSubtitle}>{isLogin ? 'Login to your digital concierge and manage your fresh wardrobe.' : 'Join the premium circle of effortless garment care and maintenance'}</Text>
+    {!isLogin && <Field label="Name" icon="person" placeholder="john doe" />}
+    <Field label="Email" icon="mail" placeholder="name@company.com" />
+    {!isLogin && <Field label="Phone Number" icon="phone" placeholder="+1 (555) 000-0000" />}
+    <Field label={isLogin ? 'Password' : 'Secure Password'} icon="lock" placeholder="••••••••" secure />
+    {isLogin && <Text style={styles.forgot}>Forgot Password?</Text>}
+    <Primary label={isLogin ? 'Login' : 'Sign Up'} onPress={() => isLogin ? go('home') : go('accountType')} style={styles.authButton} />
+    {isLogin && <><Divider label="Or Continue With" /><View style={styles.socialRow}><Secondary label="Google" /><Secondary label="Facebook" /></View></>}
+    <Pressable onPress={() => { setMode(isLogin ? 'signup' : 'login'); go(isLogin ? 'signup' : 'login'); }}><Text style={styles.authSwitch}>{isLogin ? "Don't have an account? " : 'Already have an account? '}<Text style={styles.blueBold}>{isLogin ? 'Sign Up' : 'Login'}</Text></Text></Pressable>
+    {isLogin ? <View style={styles.legal}><Text>Privacy Policy        Terms Of Service</Text><Text>© 2026 Laundr Marketplace Inc.</Text></View> : <Text style={styles.terms}>By creating an account, you agree to our{`\n`}Terms of Service and Privacy Policy.</Text>}
+  </View></Page>;
+}
+
+function AccountType({ go }: { go: (screen: Screen) => void }) {
+  const [customer, setCustomer] = useState(true);
+  return <Page><BookingHeader title="Create your account" subtitle="Step 1 of 4" onBack={() => go('signup')} />
+    <View style={styles.choiceBody}><Text style={styles.choiceLead}>How will you use Laundr? This sets up your onboarding and dashboard.</Text>
+      <Choice selected={customer} icon="shopping_bag" title="I Need Laundry Services" subtitle="Customer Account" text="Find, book and manage laundry services from trusted providers near you." onPress={() => setCustomer(true)} />
+      <Choice selected={!customer} icon="business_center" title="I Provide Laundry Services" subtitle="Provider Account" text="Receive bookings, manage orders, grow your laundry business and earn income." onPress={() => setCustomer(false)} />
+      <View style={styles.tip}><AppIcon name="verified_user" size={27} color={BLUE} /><Text style={styles.tipText}>Providers complete a verification step before receiving bookings. You can add a provider profile later from settings.</Text></View>
+    </View><BottomButton label="Continue" onPress={() => go('home')} /></Page>;
+}
+
+function Home({ go, query, setQuery }: { go: (screen: Screen) => void; query: string; setQuery: (value: string) => void }) {
+  const visible = useMemo(() => providers.filter((provider) => provider.name.toLowerCase().includes(query.toLowerCase()) || provider.services.join(' ').toLowerCase().includes(query.toLowerCase())), [query]);
+  return <Page bottom={<TabBar active="Home" go={go} />}><AppHeader onMenu={() => undefined} />
+    <ScrollView style={styles.flexScroll} contentContainerStyle={styles.homeContent}><View style={styles.locationCard}><AppIcon name="location_on" size={24} color={BLUE} /><View><Text style={styles.micro}>PICKUP LOCATION</Text><Text style={styles.locationName}>Mount Pleasant, Harare⌄</Text></View><View style={styles.profileDot}><Text>♟</Text></View></View>
+      <Text style={styles.homeHeadline}>Freshness <Text style={styles.blue}>Delivered.</Text></Text>
+      <View style={styles.searchBox}><AppIcon name="search" size={23} color="#8d95a1" /><TextInput value={query} onChangeText={setQuery} placeholder="Search providers..." placeholderTextColor="#737d8e" style={styles.searchInput} /><Pressable onPress={() => go('filter')} style={styles.filterIcon}><AppIcon name="tune" size={22} color={BLUE} /></Pressable></View>
+      <View style={styles.chips}><Chip label="All" active /><Chip label="Washing" /><Chip label="Ironing" /><Chip label="Dry" /></View>
+      <SectionTitle title="Nearby services" action="see all" /><View>{visible.map((provider) => <ProviderCard key={provider.id} provider={provider} onPress={() => go('provider')} />)}</View>
+    </ScrollView></Page>;
+}
+
+function Filter({ go, filters, setFilters }: { go: (screen: Screen) => void; filters: string[]; setFilters: (filters: string[]) => void }) {
+  const toggle = (item: string) => setFilters(filters.includes(item) ? filters.filter((value) => value !== item) : [...filters, item]);
+  return <Page bottom={<TabBar active="Home" go={go} />}><AppHeader onMenu={() => go('home')} /><ScrollView style={styles.flexScroll} contentContainerStyle={styles.filterBody}><Text style={styles.filterTitle}>Service Type <Text style={styles.blue}>•</Text></Text>
+    <View style={styles.typeGrid}>{['Washing', 'Ironing', 'Folding', 'Dry Cleaning'].map((item) => <Pressable key={item} onPress={() => toggle(item)} style={[styles.typeTile, filters.includes(item) && styles.typeTileActive]}><Text style={[styles.typeTileText, filters.includes(item) && styles.typeTileTextActive]}>{item}</Text><Text style={[styles.typeMark, filters.includes(item) && styles.typeMarkActive]}>{filters.includes(item) ? '●' : '⊕'}</Text></Pressable>)}</View>
+    <Text style={styles.filterTitle}>Distance</Text><View style={styles.filterCard}><View style={styles.filterCardTop}><Text style={styles.filterLabel}>Radius</Text><Text style={styles.blueBold}>Under 5km</Text></View><View style={styles.slider}><View style={styles.sliderActive} /><View style={styles.sliderKnob} /></View><View style={styles.sliderLabels}><Text>1 KM</Text><Text>5 KM</Text><Text>10 KM</Text></View></View>
+    <Text style={styles.filterTitle}>Rating</Text><View style={styles.ratingRow}><Rating label="4.0 ★" detail="RECOMMENDED" /><Rating selected label="4.5 ★" detail="TOP RATED" /><Rating label="Any" detail="NO LIMIT" /></View>
+    <Text style={styles.filterTitle}>Price Range</Text><View style={styles.ratingRow}><Rating label="$" /><Rating selected label="$$" /><Rating label="$$$" /></View>
+  </ScrollView><BottomButton label="Apply Filters" onPress={() => go('home')} /></Page>;
+}
+
+function ProviderDetails({ go, provider }: { go: (screen: Screen) => void; provider: Provider }) {
+  return <Page bottom={<BottomButton label="Book Now" onPress={() => go('service')} />}><AppHeader onMenu={() => go('home')} /><ScrollView contentContainerStyle={styles.providerBody}>
+    <Image source={{ uri: provider.image }} style={styles.heroImage} /><View style={styles.providerIntro}><Pill label="✿ VERIFIED" /><Text style={styles.providerName}>{provider.name}</Text><View style={styles.providerMeta}><Text style={styles.star}>★</Text><Text style={styles.metaStrong}>4.9</Text><Text>(120 reviews)</Text><AppIcon name="location_on" size={23} color={BLUE} /><Text>1.2 km away</Text></View><Text style={styles.metaStrong}>Turnaround</Text><Text style={styles.turnaround}>{provider.turnaround}</Text></View>
+    <SectionHeading title="Services" />
+    {serviceCatalog.slice(0, 3).map((service, index) => <ServiceInfo key={service.key} service={service.name === 'Wash & Fold' ? 'Standard Wash & Fold' : service.name} detail={index === 0 ? 'Includes sorting, washing, and professional folding' : index === 1 ? 'Crisp steam ironing for all garment types' : 'Eco-friendly solvents for delicate fabrics'} price={service.price} unit={service.unit.replace('per ', '')} icon={index === 1 ? 'iron' : index === 2 ? 'dry_cleaning' : 'local_laundry_service'} />)}
+    <SectionHeading title="About" /><View style={styles.aboutCard}><Text style={styles.aboutText}>At SwiftWash & Dry, we treat your garments like our own. With over 10 years of experience in textile care, we use state-of-the-art European machinery and eco-conscious detergents to ensure your clothes return brighter, softer, and perfectly pressed. Our facility in Mount Pleasant is climate-controlled and dust-free to maintain the highest hygiene standards.</Text></View>
+    <View style={styles.areaCard}><Text style={styles.areaTitle}>⌑  Service Area</Text><Text style={styles.addressPill}>{provider.address}</Text><View style={styles.mapArea}><Text style={styles.mapHome}>⌂</Text></View></View>
+    <View style={styles.hoursCard}><Text style={styles.hoursTitle}>◷  Operating Hours</Text><Text style={styles.hoursText}>Mon - Sat: 08:00 AM - 07:00 PM{`\n`}Sun: 10:00 AM - 04:00 PM</Text></View>
+  </ScrollView></Page>;
+}
+
+function SelectService({ go, booking, setBooking, subtotal }: { go: (screen: Screen) => void; booking: Booking; setBooking: (booking: Booking) => void; subtotal: number }) {
+  return <Page bottom={<BookingBottom label="Continue" detail={`Subtotal                         ${money(subtotal)}`} onPress={() => go('collection')} />}><BookingHeader title="Select service" subtitle={booking.provider.name} onBack={() => go('provider')} step={1} />
+    <ScrollView contentContainerStyle={styles.bookingBody}>{serviceCatalog.map((service) => <Pressable key={service.key} onPress={() => setBooking({ ...booking, service: service.key })} style={[styles.serviceChoice, booking.service === service.key && styles.selectedChoice]}><View><Text style={styles.serviceChoiceTitle}>{service.name}</Text><Text style={styles.serviceChoiceMeta}>{service.duration} · {service.unit}</Text></View><Text style={styles.servicePrice}>{money(service.price)}</Text></Pressable>)}
+      <View style={styles.loadCard}><View><Text style={styles.serviceChoiceTitle}>Estimated load</Text><Text style={styles.serviceChoiceMeta}>per kg</Text></View><View style={styles.stepper}><Pressable onPress={() => setBooking({ ...booking, load: Math.max(1, booking.load - 1) })} style={styles.stepperMinus}><Text style={styles.stepperText}>−</Text></Pressable><Text style={styles.loadNumber}>{booking.load}</Text><Pressable onPress={() => setBooking({ ...booking, load: booking.load + 1 })} style={styles.stepperPlus}><Text style={styles.stepperPlusText}>+</Text></Pressable></View></View>
+      <Text style={styles.instructionsTitle}>Special instructions</Text><TextInput value={booking.instructions} onChangeText={(instructions) => setBooking({ ...booking, instructions })} placeholder="e.g. iron the two blue shirts separately" multiline style={styles.instructions} />
+    </ScrollView></Page>;
+}
+
+function MethodScreen({ kind, go, booking, setBooking }: { kind: 'collection' | 'delivery'; go: (screen: Screen) => void; booking: Booking; setBooking: (booking: Booking) => void }) {
+  const collection = kind === 'collection';
+  const first = collection ? 'Pickup from me' : 'Deliver to me';
+  const second = collection ? "I'll drop off" : "I'll collect";
+  const selected = collection ? booking.collection : booking.delivery;
+  const set = (value: typeof selected) => collection ? setBooking({ ...booking, collection: value as Booking['collection'] }) : setBooking({ ...booking, delivery: value as Booking['delivery'] });
+  return <Page bottom={<BottomButton label="Continue" onPress={() => go(collection ? 'delivery' : 'schedule')} />}><BookingHeader title={`${collection ? 'Collection' : 'Delivery'} method`} onBack={() => go(collection ? 'service' : 'collection')} step={collection ? 2 : 3} />
+    <View style={styles.methodBody}><MethodChoice selected={selected === first} icon={collection ? 'two_wheeler' : 'local_shipping'} title={first} text={collection ? 'A rider collects from your address. +US$2 within 10 km of Mt Pleasant.' : 'Rider returns your laundry in the slot you choose. +US$2.'} onPress={() => set(first)} /><MethodChoice selected={selected === second} icon={collection ? 'storefront' : 'inventory_2'} title={second} text={collection ? 'Bring your laundry to Sparkle Laundry Hub, Mt Pleasant. No extra fee.' : 'Collect from Sparkle Laundry Hub once you get the ready notification.'} onPress={() => set(second)} />
+      {collection && <><Text style={styles.addressTitle}>PICKUP ADDRESS</Text>{[['Home', '12 Bosman Rd, Mt Pleasant, Harare'], ['Campus', 'New Complex Block C, UZ, Mt Pleasant'], ['Office', '5th Floor, Fidelity House, Harare CBD']].map(([title, text], index) => <Pressable key={title} style={[styles.addressChoice, index === 0 && styles.selectedChoice]}><Text style={styles.addressChoiceTitle}>{title}</Text><Text style={styles.addressChoiceText}>{text}</Text></Pressable>)}</>}
+    </View></Page>;
+}
+
+function Schedule({ go, booking, setBooking }: { go: (screen: Screen) => void; booking: Booking; setBooking: (booking: Booking) => void }) {
+  const slots = [['Morning Arrival', '08:00 AM - 10:00 AM'], ['Late Morning', '10:00 AM - 12:00 PM'], ['Afternoon Window', '02:00 PM - 04:00 PM'], ['Evening Pickup', '06:00 PM - 08:00 PM']];
+  return <Page bottom={<BookingBottom label="Continue" left="Back" onLeft={() => go('delivery')} onPress={() => go('summary')} />}><AppHeader onMenu={() => go('home')} /><ScrollView contentContainerStyle={styles.scheduleBody}><Text style={styles.scheduleTitle}>Schedule Pickup</Text><Text style={styles.scheduleIntro}>Select a preferred date and time for our concierge to collect your garments. We'll handle the rest.</Text>
+    <Calendar /><View style={styles.slotPanel}><Text style={styles.slotHeading}>◷  Available Time Slots</Text>{slots.map(([title, time]) => { const value = `Today, ${time.replace(' AM', '').replace(' PM', '')}`; const active = booking.slot.includes(time.split(' ')[0]); return <Pressable key={title} onPress={() => setBooking({ ...booking, slot: value })} style={[styles.slot, active && styles.slotSelected]}><View><Text style={[styles.slotTitle, active && styles.blue]}>{title}</Text><Text style={[styles.slotTime, active && styles.blue]}>{time}</Text></View>{active && <Text style={styles.slotCheck}>●</Text>}</Pressable>; })}<View style={styles.moreSlots}><Text>ⓘ   More slots available for Pro members</Text></View></View>
+  </ScrollView></Page>;
+}
+
+function Summary({ go, booking, subtotal, deliveryFee, fee, total }: { go: (screen: Screen) => void; booking: Booking; subtotal: number; deliveryFee: number; fee: number; total: number }) {
+  const service = serviceCatalog.find((item) => item.key === booking.service)!;
+  return <Page bottom={<BookingBottom label={`Continue to payment · ${money(total)}`} onPress={() => go('payment')} />}><BookingHeader title="Booking summary" onBack={() => go('schedule')} step={5} /><View style={styles.summaryBody}>
+    <SummaryCard rows={[['Provider', booking.provider.name], ['Service', `${service.name} · ${booking.load} kg`], ['Collection', booking.collection], ['Delivery', booking.delivery], ['When', booking.slot], ['Address', '12 Bosman Rd, Mt Pleasant, Harare']]} />
+    <View style={styles.summaryCard}>{[['Service subtotal', money(subtotal)], ['Pickup & delivery', money(deliveryFee)], ['Laundr fee (5%)', money(fee)]].map(([name, value]) => <SummaryRow key={name} name={name} value={value} />)}<View style={styles.summaryDivider} /><SummaryRow total name="Total" value={money(total)} /></View>
+  </View></Page>;
+}
+
+function Payment({ go, booking, setBooking, total, pay }: { go: (screen: Screen) => void; booking: Booking; setBooking: (booking: Booking) => void; total: number; pay: () => void }) {
+  const methods: [Booking['payment'], string, string, string][] = [['EcoCash', 'smartphone', '077 *** 4412', ''], ['Card', 'credit_card', 'Visa **** 8821', ''], ['Cash on delivery', 'account_balance_wallet', 'Pay the rider', '']];
+  return <Page bottom={<BookingBottom label={`Pay ${money(total)}`} onPress={pay} />}><BookingHeader title="Payment" onBack={() => go('summary')} /><View style={styles.paymentBody}>{methods.map(([name, icon, sub]) => <MethodChoice key={name} selected={booking.payment === name} icon={icon} title={name} text={sub} onPress={() => setBooking({ ...booking, payment: name })} />)}<View style={styles.amountCard}><SummaryRow total name="Amount due" value={money(total)} /><Text style={styles.amountNote}>Funds are held by Laundr and released to the provider once you confirm delivery.</Text></View></View></Page>;
+}
+
+function Confirmed({ go, booking, order }: { go: (screen: Screen) => void; booking: Booking; order: LaundrOrder }) {
+  return <Page><View style={styles.confirmed}><View style={styles.checkCircle}><Text>✓</Text></View><Text style={styles.confirmedTitle}>Booking confirmed</Text><Text style={styles.confirmedCopy}>{booking.provider.name} will collect your {serviceCatalog.find((item) => item.key === booking.service)?.name.toLowerCase()} on {booking.slot}.</Text><SummaryCard rows={[['Order', order.id], ['Paid via', booking.payment], ['Total', money(order.total)]]} /><Primary label="Track my order" onPress={() => go('track')} style={styles.confirmedButton} /><Pressable onPress={() => go('home')}><Text style={styles.backHome}>Back to home</Text></Pressable></View></Page>;
+}
+
+function Orders({ go, orders, open }: { go: (screen: Screen) => void; orders: LaundrOrder[]; open: (order: LaundrOrder) => void }) {
+  return <Page bottom={<TabBar active="Orders" go={go} />}><View style={styles.ordersHeader}><Text style={styles.ordersTitle}>My orders</Text><View style={styles.orderTabs}><Chip label="Active" active /><Chip label="Completed" /><Chip label="Cancelled" /></View></View><ScrollView style={styles.flexScroll} contentContainerStyle={styles.ordersBody}>{orders.map((order) => <Pressable key={order.id} onPress={() => open(order)} style={styles.orderCard}><View><Text style={styles.orderService}>{order.service}</Text><Text style={styles.orderProvider}>{order.provider} · {order.load} {order.service === 'Dry Cleaning' ? 'items' : 'kg'}</Text></View><Pill label={order.status} /><View style={styles.orderFooter}><Text style={styles.orderSlot}>⌖  {order.slot}</Text><Text style={styles.orderTotal}>{money(order.total)}</Text></View></Pressable>)}</ScrollView></Page>;
+}
+
+function TrackOrder({ go, order }: { go: (screen: Screen) => void; order: LaundrOrder }) {
+  return <Page bottom={<View style={styles.trackBottom}><Pressable onPress={() => go('chat')} style={styles.chatShortcut}><AppIcon name="chat_bubble_outline" size={29} color={INK} /></Pressable><Primary label="View provider reviews" onPress={() => go('reviews')} style={styles.trackCta} /></View>}><BookingHeader title={`Order ${order.id}`} subtitle={order.provider} onBack={() => go('orders')} /><ScrollView contentContainerStyle={styles.trackBody}>
+    <View style={styles.trackCard}><View style={styles.trackHead}><View><Text style={styles.orderService}>{order.service}</Text><Text style={styles.orderProvider}>{order.load} kg · placed {order.placed}</Text></View><Pill label={order.status} /></View><View style={styles.summaryDivider} />{[['Slot', order.slot], ['Address', order.address], ['Collection', order.collection], ['Delivery', order.delivery], ['Payment', order.payment], ['Total', money(order.total)]].map(([name, value]) => <SummaryRow key={name} name={name} value={value} />)}</View>
+    <View style={styles.trackingCard}><Text style={styles.trackingTitle}>Tracking</Text><Timeline status={order.status} /></View>
+  </ScrollView></Page>;
+}
+
+function Chat({ go }: { go: (screen: Screen) => void }) {
+  const [message, setMessage] = useState(''); const [messages, setMessages] = useState([{ text: 'Morning Anesu, we have collected your 6 kg load.', time: '08:22', mine: false }, { text: 'Thanks! Please iron the two blue shirts separately.', time: '08:24', mine: true }, { text: 'Noted, no extra charge.', time: '08:25', mine: false }, { text: 'Rider is 10 minutes away from your gate.', time: '09:41', mine: false }]);
+  const send = () => { if (!message.trim()) return; setMessages([...messages, { text: message.trim(), time: 'Now', mine: true }]); setMessage(''); };
+  return <Page><BookingHeader title="Sparkle Laundry Hub" subtitle="Usually replies in 5 min" onBack={() => go('track')} right="phone" /><ScrollView contentContainerStyle={styles.chatBody}><Text style={styles.today}>Today</Text>{messages.map((item, index) => <View key={`${item.time}-${index}`} style={[styles.message, item.mine ? styles.mine : styles.theirs]}><Text style={[styles.messageText, item.mine && styles.mineText]}>{item.text}</Text><Text style={[styles.messageTime, item.mine && styles.mineText]}>{item.time}</Text></View>)}</ScrollView><View style={styles.composer}><Pressable style={styles.attach}><AppIcon name="attach_file" size={29} color={INK} /></Pressable><TextInput style={styles.composerInput} value={message} onChangeText={setMessage} placeholder="Type a message" placeholderTextColor="#7b8799" onSubmitEditing={send} /><Pressable style={styles.sendButton} onPress={send}><AppIcon name="send" size={29} color="#ffffff" /></Pressable></View></Page>;
+}
+
+function Reviews({ go }: { go: (screen: Screen) => void }) {
+  const reviews = [['Tapiwa Z.', 'Mt Pleasant · 2 days ago', '5.0', 'Collected from my hostel at UZ and returned everything folded the next morning. Unbeatable for students.'], ['Chiedza N.', 'Avondale · 1 week ago', '5.0', 'Ironing is sharp and the EcoCash payment went through instantly. Will book weekly.'], ['Simba M.', 'Marlborough · 2 weeks ago', '4.0', 'Great wash quality, delivery ran 30 minutes late but they kept me updated on chat.']];
+  return <Page><BookingHeader title="Ratings & reviews" subtitle="Sparkle Laundry Hub" onBack={() => go('track')} /><ScrollView contentContainerStyle={styles.reviewsBody}><View style={styles.scoreCard}><Text style={styles.score}>4.9</Text><Text style={styles.scoreMeta}>★ <Text style={styles.scoreNumber}>4.9</Text> (212)</Text></View>{reviews.map(([name, place, rating, copy]) => <View key={name} style={styles.reviewCard}><View style={styles.reviewTop}><View><Text style={styles.reviewName}>{name}</Text><Text style={styles.reviewPlace}>{place}</Text></View><Text style={styles.reviewRating}>★ {rating}</Text></View><Text style={styles.reviewCopy}>{copy}</Text></View>)}</ScrollView></Page>;
+}
+
+function Profile({ go }: { go: (screen: Screen) => void }) {
+  const menuGroups: [string, string, string][][] = [
+    [['person_outline', 'Edit profile', 'Name, phone, photo'], ['location_on', 'Saved addresses', '3 saved'], ['credit_card', 'Payment methods', 'EcoCash, Visa']],
+    [['notifications_none', 'Notifications', 'Order and promo alerts'], ['star_outline', 'My reviews', 'Reviews you left'], ['settings', 'Settings', 'Language, privacy']],
+    [['help_outline', 'Help & support', 'Chat with the Laundr team'], ['info_outline', 'About Laundr', 'Version 1.0.0']],
+  ];
+  return <Page bottom={<TabBar active="Profile" go={go} />}><ScrollView contentContainerStyle={styles.profileBody}>
+    <Text style={styles.profileTitle}>Profile</Text>
+    <View style={styles.profileCard}><View style={styles.profileAvatar}><Text style={styles.profileInitials}>AM</Text></View><View><Text style={styles.profileName}>Anesu Marimo</Text><Text style={styles.profileMeta}>+263 77 123 4567 · Mt Pleasant, Harare</Text></View></View>
+    {menuGroups.map((group, gi) => <View key={gi} style={styles.profileGroup}>{group.map(([icon, title, sub], i) => <View key={title}>{i > 0 && <View style={styles.profileDivider} />}<Pressable style={styles.profileRow}><View style={styles.profileRowIcon}><AppIcon name={icon} size={22} color={BLUE} /></View><View><Text style={styles.profileRowTitle}>{title}</Text><Text style={styles.profileRowSub}>{sub}</Text></View></Pressable></View>)}</View>)}
+    <Pressable onPress={() => go('login')} style={styles.logoutButton}><AppIcon name="logout" size={20} color="#c0392b" /><Text style={styles.logoutText}>Log out</Text></Pressable>
+  </ScrollView></Page>;
+}
+
+function Page({ children, bottom, scroll = false, style }: { children: React.ReactNode; bottom?: React.ReactNode; scroll?: boolean; style?: object }) {
+  return <SafeAreaView style={[styles.page, style]}><StatusBar style="dark" />{scroll ? <ScrollView>{children}</ScrollView> : children}{bottom}</SafeAreaView>;
+}
+
+function AppHeader({ onMenu }: { onMenu: () => void }) { return <View style={styles.appHeader}><Pressable onPress={onMenu} style={styles.appBrand}><AppIcon name="menu" size={25} color={BLUE} /><Text style={styles.appBrandText}>Laundr</Text></Pressable><AppIcon name="notifications_none" size={25} color="#526985" /></View>; }
+function BookingHeader({ title, subtitle, onBack, step, right }: { title: string; subtitle?: string; onBack: () => void; step?: number; right?: string }) { return <View style={styles.bookingHeader}><IconButton name="arrow_back" onPress={onBack} style={styles.bookingBack} /><View style={styles.bookingHeaderText}><Text style={styles.bookingHeaderTitle}>{title}</Text>{subtitle && <Text style={styles.bookingHeaderSubtitle}>{subtitle}</Text>}</View>{step && <Dots count={5} active={step - 1} />}{right && <IconButton name={right} onPress={() => undefined} />}</View>; }
+function AppIcon({ name, size, color }: { name: string; size: number; color: string }) { return <SymbolView name={{ ios: name as never, android: name as never, web: name as never }} size={size} tintColor={color} />; }
+function IconButton({ name, onPress, style }: { name: string; onPress: () => void; style?: object }) { return <Pressable onPress={onPress} hitSlop={12} style={[styles.iconButton, style]}><AppIcon name={name} size={27} color={BLUE} /></Pressable>; }
+function Primary({ label, onPress, style }: { label: string; onPress: () => void; style?: object }) { return <Pressable onPress={onPress} style={({ pressed }) => [styles.primary, style, pressed && styles.pressed]}><Text style={styles.primaryText}>{label}</Text></Pressable>; }
+function Secondary({ label }: { label: string }) { return <Pressable style={styles.secondary}><Text style={styles.secondaryText}>{label}</Text></Pressable>; }
+function BottomButton({ label, onPress }: { label: string; onPress: () => void }) { return <View style={styles.bottomButton}><Primary label={label} onPress={onPress} /></View>; }
+function BookingBottom({ label, detail, onPress, left, onLeft }: { label: string; detail?: string; onPress: () => void; left?: string; onLeft?: () => void }) { return <View style={styles.bookingBottom}>{detail && <Text style={styles.subtotal}>{detail}</Text>}<View style={styles.bookingBottomRow}>{left && <Pressable onPress={onLeft}><Text style={styles.backLabel}>{left}</Text></Pressable>}<Primary label={label} onPress={onPress} style={styles.bookingContinue} /></View></View>; }
+function Field({ label, icon, placeholder, secure }: { label: string; icon: string; placeholder: string; secure?: boolean }) { return <View style={styles.fieldGroup}><Text style={styles.fieldLabel}>{label}</Text><View style={styles.field}><AppIcon name={icon} size={20} color="#758095" /><TextInput placeholder={placeholder} secureTextEntry={secure} placeholderTextColor="#788397" style={styles.fieldInput} /></View></View>; }
+function Divider({ label }: { label: string }) { return <View style={styles.divider}><View style={styles.dividerLine} /><Text>{label}</Text><View style={styles.dividerLine} /></View>; }
+function Dots({ count, active }: { count: number; active: number }) { return <View style={styles.dots}>{Array.from({ length: count }).map((_, index) => <View key={index} style={[styles.dot, active === index && styles.dotActive]} />)}</View>; }
+function Chip({ label, active }: { label: string; active?: boolean }) { return <View style={[styles.chip, active && styles.chipActive]}><Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text></View>; }
+function SectionTitle({ title, action }: { title: string; action?: string }) { return <View style={styles.sectionTitle}><Text style={styles.sectionTitleText}>{title}</Text>{action && <Text style={styles.sectionAction}>{action}</Text>}</View>; }
+function SectionHeading({ title }: { title: string }) { return <Text style={styles.sectionHeading}><Text style={styles.headingAccent}>┃</Text> {title}</Text>; }
+function Pill({ label }: { label: string }) { return <View style={styles.pill}><Text style={styles.pillText}>{label}</Text></View>; }
+function ProviderCard({ provider, onPress }: { provider: Provider; onPress: () => void }) { return <Pressable onPress={onPress} style={styles.providerCard}><Image source={{ uri: provider.image }} style={styles.providerThumb} /><View style={styles.providerCardInfo}><View style={styles.providerTitleRow}><Text style={styles.providerCardName}>{provider.name}</Text><Text style={styles.cardRating}>★ {provider.rating}</Text></View>{provider.services.map((service) => <Text key={service} style={styles.providerService}>• {service}</Text>)}<View style={styles.providerFooter}><Text style={styles.distance}>⌖ {provider.distance} km away</Text><Text style={styles.free}>Free Delivery</Text><Text style={styles.priceTag}>From $12/load</Text></View></View></Pressable>; }
+function Rating({ label, detail, selected }: { label: string; detail?: string; selected?: boolean }) { return <View style={[styles.ratingBox, selected && styles.ratingBoxSelected]}><Text style={[styles.ratingValue, selected && styles.ratingValueSelected]}>{label}</Text>{detail && <Text style={[styles.ratingDetail, selected && styles.ratingDetailSelected]}>{detail}</Text>}</View>; }
+function Choice({ selected, icon, title, subtitle, text, onPress }: { selected: boolean; icon: string; title: string; subtitle: string; text: string; onPress: () => void }) { return <Pressable onPress={onPress} style={[styles.accountChoice, selected && styles.selectedChoice]}><View style={[styles.choiceIcon, selected && styles.choiceIconSelected]}><AppIcon name={icon} size={31} color={selected ? '#ffffff' : INK} /></View><View style={styles.choiceCopy}><Text style={styles.choiceTitle}>{title}</Text><Text style={styles.choiceSubtitle}>{subtitle}</Text><Text style={styles.choiceText}>{text}</Text></View>{selected && <Text style={styles.choiceCheck}>✓</Text>}</Pressable>; }
+function ServiceInfo({ service, detail, price, unit, icon }: { service: string; detail: string; price: number; unit: string; icon: string }) { return <View style={styles.serviceInfo}><View style={styles.serviceIcon}><AppIcon name={icon} size={25} color={BLUE} /></View><View style={styles.serviceInfoCopy}><Text style={styles.serviceInfoTitle}>{service}</Text><Text style={styles.serviceInfoDetail}>{detail}</Text></View><Text style={styles.serviceInfoPrice}>{money(price)}<Text style={styles.serviceInfoUnit}>/{unit}</Text></Text></View>; }
+function MethodChoice({ selected, icon, title, text, onPress }: { selected: boolean; icon: string; title: string; text: string; onPress: () => void }) { return <Pressable onPress={onPress} style={[styles.methodChoice, selected && styles.selectedChoice]}><View style={[styles.methodIcon, selected && styles.methodIconSelected]}><AppIcon name={icon} size={32} color={selected ? '#ffffff' : INK} /></View><View style={styles.methodCopy}><Text style={styles.methodTitle}>{title}</Text><Text style={styles.methodText}>{text}</Text></View>{selected && <Text style={styles.choiceCheck}>✓</Text>}</Pressable>; }
+function Calendar() { const days = ['28', '29', '30', '31', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17']; return <View style={styles.calendar}><View style={styles.calendarHeader}><Text style={styles.calendarMonth}>April 2026</Text><Text style={styles.calendarArrows}>‹   ›</Text></View><View style={styles.week}>{['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'].map((day) => <Text key={day}>{day}</Text>)}</View><View style={styles.days}>{days.map((day, index) => <Text key={`${day}-${index}`} style={[styles.day, index < 4 && styles.dayMuted, day === '6' && styles.daySelected, day === '15' && styles.dayBlue, day === '16' && styles.dayBlue]}>{day}</Text>)}</View></View>; }
+function SummaryCard({ rows }: { rows: string[][] }) { return <View style={styles.summaryCard}>{rows.map(([name, value]) => <SummaryRow key={name} name={name} value={value} />)}</View>; }
+function SummaryRow({ name, value, total }: { name: string; value: string; total?: boolean }) { return <View style={styles.summaryRow}><Text style={[styles.summaryName, total && styles.summaryTotal]}>{name}</Text><Text style={[styles.summaryValue, total && styles.summaryTotal]}>{value}</Text></View>; }
+function Timeline({ status }: { status: LaundrOrder['status'] }) { const steps = ['Booking accepted', 'Laundry collected', 'In the wash', 'Ready', 'Out for delivery']; const current = status === 'Out for delivery' ? 4 : status === 'Ready' ? 3 : 2; return <View>{steps.map((step, index) => <View key={step} style={styles.timelineItem}><View style={styles.timelineRail}><View style={[styles.timelineDot, index <= current && styles.timelineDotActive]}><Text style={styles.timelineDotText}>{index <= current ? '✓' : index + 1}</Text></View>{index < steps.length - 1 && <View style={[styles.timelineLine, index < current && styles.timelineLineActive]} />}</View><View><Text style={[styles.timelineTitle, index <= current && styles.timelineTitleActive]}>{step}</Text><Text style={styles.timelineCopy}>{index === 0 ? 'Provider confirmed your slot' : index === 1 ? 'Picked up from your address' : index === 2 ? 'Being washed and pressed' : index === 3 ? 'Packed and quality checked' : 'Your rider is on the way'}</Text></View></View>)}</View>; }
+function TabBar({ active, go }: { active: string; go: (screen: Screen) => void }) { const tabs = [['Home', 'home', 'home'], ['Search', 'search', 'home'], ['Orders', 'inventory_2', 'orders'], ['Messages', 'chat_bubble_outline', 'chat'], ['Profile', 'person_outline', 'profile']] as const; return <View style={styles.tabBar}>{tabs.map(([label, icon, target]) => <Pressable key={label} onPress={() => go(target)} style={styles.tab}><AppIcon name={icon} size={24} color={active === label ? BLUE : '#8da0bb'} /><Text style={[styles.tabText, active === label && styles.tabTextActive]}>{label}</Text></Pressable>)}</View>; }
+function WasherIcon({ size, color }: { size: number; color: string }) { return <View style={[styles.washer, { width: size, height: size + 8, borderColor: color }]}><View style={[styles.washerDots, { backgroundColor: color }]} /><View style={[styles.washerDots, styles.washerDotsSecond, { backgroundColor: color }]} /><View style={[styles.washerDrum, { borderColor: color }]}><View style={[styles.washerFill, { backgroundColor: color }]} /></View></View>; }
+function DiscoverArt() { return <View style={styles.discoverArt}><View style={styles.artWasher}><WasherIcon size={30} color={BLUE} /></View><View style={styles.pinArt}><AppIcon name="location_on" size={24} color="#006982" /></View><View style={styles.artPager}><View style={styles.artActive} /><View style={styles.artIdle} /></View></View>; }
+function FlowArt() { return <View style={styles.flowArt}><View style={styles.flowOption}><View style={styles.flowIcon}><AppIcon name="local_shipping" size={35} color={BLUE} /></View><Text style={styles.flowLabel}>Pick Up</Text></View><View style={styles.flowOption}><View style={styles.flowIcon}><AppIcon name="storefront" size={35} color={BLUE} /></View><Text style={styles.flowLabel}>Drop Off</Text></View></View>; }
+function TrackArt() { return <View style={styles.trackArt}><View style={styles.artOrder}><Text style={styles.micro}>Order #8821</Text><Text style={styles.artOrderTitle}>Ready for{`\n`}Delivery</Text></View><View style={styles.artPilot}><View style={styles.artAvatar}><Text>👨🏽</Text></View><Text style={styles.artPilotText}>Your Pilot{`\n`}Alex M.</Text></View><View style={styles.artMap}><Text>⌂</Text></View><View style={styles.artActivity}><Text style={styles.micro}>●  RECENT ACTIVITY</Text><Text style={styles.artActivityText}>Steam Pressed{`\n`}10:45 AM{`\n`}{`\n`}Loaded for Delivery</Text></View></View>; }
+
+function money(value: number) { return `US$${value.toFixed(2)}`; }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
-  },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
-  },
-  title: {
-    textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
-  },
+  page: { flex: 1, backgroundColor: PAGE }, splash: { flex: 1, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }, logoLockup: { flexDirection: 'row', alignItems: 'center', gap: 9 }, logoText: { color: BLUE, fontSize: 51, lineHeight: 58, fontWeight: '900', letterSpacing: -3.7, fontFamily: FONT },
+  washer: { borderWidth: 4.5, borderRadius: 6, position: 'relative' }, washerDots: { position: 'absolute', width: 5, height: 5, borderRadius: 3, left: 7, top: 7 }, washerDotsSecond: { left: 17 }, washerDrum: { position: 'absolute', width: '64%', aspectRatio: 1, borderWidth: 3.5, borderRadius: 40, bottom: 6, left: '17%', overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }, washerFill: { height: '83%', width: '56%', transform: [{ rotate: '45deg' }, { translateX: -8 }] },
+  topBare: { height: 64, justifyContent: 'center', paddingHorizontal: 22, marginTop: 20, marginBottom: 1 }, iconButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' }, onboardPage: { paddingHorizontal: 23 }, discoverArt: { height: 350, backgroundColor: '#fff', borderRadius: 39, position: 'relative', justifyContent: 'center', alignItems: 'center' }, artWasher: { height: 96, width: 96, borderRadius: 31, backgroundColor: '#d7e3ff', alignItems: 'center', justifyContent: 'center', marginTop: -18, shadowColor: '#8294b9', shadowOffset: { width: 0, height: 9 }, shadowOpacity: .25, shadowRadius: 10, elevation: 4 }, pinArt: { height: 49, width: 49, backgroundColor: '#5aceef', borderRadius: 12, position: 'absolute', top: 92, left: '57%', alignItems: 'center', justifyContent: 'center', shadowColor: '#5395a9', shadowOffset: { width: 0, height: 7 }, shadowOpacity: .24, shadowRadius: 8, elevation: 4 }, artPager: { position: 'absolute', bottom: 108, flexDirection: 'row', gap: 8 }, artActive: { height: 6, width: 48, borderRadius: 6, backgroundColor: '#00778c' }, artIdle: { height: 6, width: 16, borderRadius: 6, backgroundColor: '#e7eaf0' }, flowArt: { height: 352, borderRadius: 39, backgroundColor: '#e7eef5', flexDirection: 'row', gap: 24, alignItems: 'center', justifyContent: 'center' }, flowOption: { height: 146, width: 126, backgroundColor: '#fff', borderRadius: 25, alignItems: 'center', justifyContent: 'center', gap: 12 }, flowIcon: { height: 64, width: 64, borderRadius: 16, backgroundColor: '#d7e3ff', alignItems: 'center', justifyContent: 'center' }, flowLabel: { fontSize: 16, fontWeight: '800', fontFamily: FONT }, trackArt: { height: 356, position: 'relative' }, artOrder: { position: 'absolute', top: 0, left: 0, height: 169, width: 230, padding: 23, borderRadius: 25, backgroundColor: '#fff', shadowColor: '#9da7bb', shadowOpacity: .1, shadowOffset: { width: 0, height: 7 }, shadowRadius: 9, elevation: 2 }, artOrderTitle: { fontFamily: FONT, fontSize: 20, fontWeight: '800', lineHeight: 26, marginTop: 14 }, artPilot: { position: 'absolute', right: 0, top: 0, height: 109, width: 107, borderRadius: 25, backgroundColor: '#2377dd', alignItems: 'center', paddingTop: 11 }, artAvatar: { height: 45, width: 45, borderRadius: 24, backgroundColor: '#f5e5d0', fontSize: 27, textAlign: 'center', paddingTop: 6 }, artPilotText: { color: '#fff', fontFamily: FONT, fontWeight: '500', fontSize: 12, lineHeight: 15, textAlign: 'center', marginTop: 8 }, artMap: { position: 'absolute', left: 0, bottom: 0, height: 167, width: 170, borderRadius: 25, backgroundColor: '#deebd6', alignItems: 'center', justifyContent: 'center' }, artActivity: { position: 'absolute', right: 0, bottom: 0, height: 169, width: 169, borderRadius: 25, backgroundColor: '#fff', padding: 17 }, artActivityText: { fontSize: 12, fontFamily: FONT, fontWeight: '500', lineHeight: 18, marginTop: 12 }, progressLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 23 }, dots: { flexDirection: 'row', gap: 5 }, dot: { height: 7, width: 16, borderRadius: 4, backgroundColor: '#cfe0ff' }, dotActive: { width: 48, backgroundColor: BLUE }, stepText: { fontSize: 12, color: '#9098a5', fontFamily: FONT }, onboardTitle: { color: INK, fontFamily: FONT, fontSize: 28, fontWeight: '900', letterSpacing: -1.1, lineHeight: 34, marginTop: 29 }, blue: { color: BLUE }, blueBold: { color: BLUE, fontWeight: '800' }, onboardCopy: { color: '#5b6575', fontFamily: FONT, fontSize: 16, lineHeight: 24, marginTop: 18 }, primary: { minHeight: 61, borderRadius: 18, backgroundColor: BLUE, alignItems: 'center', justifyContent: 'center', shadowColor: '#07498e', shadowOffset: { width: 0, height: 8 }, shadowOpacity: .22, shadowRadius: 8, elevation: 5 }, primaryText: { color: '#fff', fontFamily: FONT, fontSize: 16, fontWeight: '900', letterSpacing: .2 }, onboardButton: { marginHorizontal: 15, marginTop: 23, height: 69, borderRadius: 22 }, pressed: { opacity: .8, transform: [{ scale: .99 }] },
+  authContent: { paddingHorizontal: 23, paddingTop: 40, flex: 1 }, authTitle: { fontFamily: FONT, fontSize: 24, lineHeight: 30, fontWeight: '900', color: INK, letterSpacing: -.8, marginTop: 29 }, authSubtitle: { fontFamily: FONT, fontSize: 16, color: '#535e70', lineHeight: 24, marginTop: 4, marginBottom: 17 }, fieldGroup: { marginBottom: 20 }, fieldLabel: { fontFamily: FONT, color: INK, fontSize: 14, fontWeight: '500', marginBottom: 8 }, field: { height: 53, borderRadius: 13, backgroundColor: '#f1f3f7', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 12 }, fieldInput: { flex: 1, fontFamily: FONT, color: INK, fontSize: 16, height: '100%' }, forgot: { color: BLUE, fontSize: 12, fontFamily: FONT, textAlign: 'right', marginTop: -13, marginBottom: 25 }, authButton: { marginTop: 1, height: 61, borderRadius: 13 }, divider: { flexDirection: 'row', alignItems: 'center', gap: 16, marginVertical: 30, color: '#788194', justifyContent: 'center' }, dividerLine: { flex: 1, height: 1, backgroundColor: '#e5e8ee' }, socialRow: { flexDirection: 'row', justifyContent: 'center', gap: 49, marginBottom: 34 }, secondary: { width: 129, height: 59, borderRadius: 12, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }, secondaryText: { color: '#424b5b', fontFamily: FONT, fontWeight: '900', fontSize: 16, letterSpacing: .2 }, authSwitch: { textAlign: 'center', color: '#515b6a', fontFamily: FONT, fontSize: 14 }, legal: { marginTop: 'auto', paddingBottom: 13, alignItems: 'center', gap: 10 }, terms: { color: '#8a93a1', fontFamily: FONT, fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 61 },
+  bookingHeader: { height: 76, marginTop: 20, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e4e7ec', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 12 }, bookingBack: { borderRadius: 24, backgroundColor: '#f3f6fa', width: 44, height: 44, flexShrink: 0 }, bookingHeaderText: { flex: 1 }, bookingHeaderTitle: { fontFamily: FONT, color: '#101a2e', fontSize: 24, fontWeight: '900', letterSpacing: -.8, lineHeight: 30 }, bookingHeaderSubtitle: { fontFamily: FONT, color: '#758197', fontSize: 14, fontWeight: '400', lineHeight: 19 }, choiceBody: { padding: 20 }, choiceLead: { fontFamily: FONT, fontSize: 16, color: '#758197', lineHeight: 24, marginBottom: 18 }, accountChoice: { minHeight: 146, borderWidth: 1.5, borderColor: '#e0e5ed', borderRadius: 25, backgroundColor: '#fff', padding: 19, flexDirection: 'row', marginBottom: 14, position: 'relative', gap: 15 }, selectedChoice: { borderColor: BLUE, backgroundColor: '#e8f2ff' }, choiceIcon: { height: 50, width: 50, flexShrink: 0, borderRadius: 15, backgroundColor: '#f1f4f8', alignItems: 'center', justifyContent: 'center' }, choiceIconSelected: { backgroundColor: BLUE }, choiceCopy: { flex: 1 }, choiceTitle: { fontFamily: FONT, fontSize: 20, fontWeight: '500', color: '#10182c', lineHeight: 25 }, choiceSubtitle: { fontFamily: FONT, fontSize: 16, color: BLUE, marginTop: 2 }, choiceText: { fontFamily: FONT, fontSize: 14, color: '#758197', lineHeight: 20, marginTop: 9 }, choiceCheck: { position: 'absolute', right: 17, top: 18, width: 31, height: 31, borderRadius: 16, backgroundColor: BLUE, color: '#fff', fontFamily: FONT, fontSize: 19, fontWeight: '700', textAlign: 'center', paddingTop: 4 }, tip: { padding: 15, backgroundColor: '#f8fafc', borderRadius: 18, flexDirection: 'row', gap: 11, alignItems: 'flex-start' }, tipText: { flex: 1, color: '#748097', fontSize: 14, fontFamily: FONT, lineHeight: 20 }, bottomButton: { backgroundColor: '#fff', padding: 14, borderTopLeftRadius: 24, borderTopRightRadius: 24, shadowColor: '#aebcd1', shadowOpacity: .18, shadowRadius: 10, elevation: 8 },
+  appHeader: { height: 76, marginTop: 20, backgroundColor: '#fff', paddingHorizontal: 22, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 2, borderBottomColor: '#d9e8fa', shadowColor: '#7aa1cc', shadowOpacity: .25, shadowRadius: 3, elevation: 4 }, appBrand: { flexDirection: 'row', alignItems: 'center' }, appBrandText: { color: '#0955c7', fontFamily: FONT, fontWeight: '900', fontSize: 20, letterSpacing: -.6 }, homeContent: { padding: 19, paddingBottom: 20 }, locationCard: { height: 71, borderRadius: 13, backgroundColor: '#f2f4f7', flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 15 }, micro: { fontFamily: FONT, color: '#7f8898', fontWeight: '500', fontSize: 12, letterSpacing: .6 }, locationName: { fontFamily: FONT, fontWeight: '500', color: INK, fontSize: 14, marginTop: 2 }, profileDot: { marginLeft: 'auto', height: 42, width: 42, borderRadius: 25, backgroundColor: '#f0d6b3', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' }, homeHeadline: { marginTop: 25, color: INK, fontFamily: FONT, fontWeight: '900', fontSize: 24, letterSpacing: -.9 }, searchBox: { height: 50, backgroundColor: '#fff', borderRadius: 13, marginTop: 16, flexDirection: 'row', alignItems: 'center', paddingLeft: 16, gap: 8 }, searchInput: { flex: 1, fontFamily: FONT, fontSize: 16, color: INK }, filterIcon: { height: 32, width: 32, borderRadius: 9, backgroundColor: '#e4f1ff', alignItems: 'center', justifyContent: 'center', marginRight: 14 }, chips: { flexDirection: 'row', gap: 11, marginTop: 15, overflow: 'hidden' }, chip: { backgroundColor: '#e1e5ea', minWidth: 66, height: 40, paddingHorizontal: 18, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }, chipActive: { backgroundColor: BLUE, shadowColor: BLUE, shadowOpacity: .25, shadowRadius: 5, elevation: 4 }, chipText: { fontFamily: FONT, color: '#4e5766', fontWeight: '500', fontSize: 14 }, chipTextActive: { color: '#fff' }, sectionTitle: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 29, marginBottom: 18 }, sectionTitleText: { fontFamily: FONT, fontSize: 20, color: INK, fontWeight: '900', letterSpacing: -.6 }, sectionAction: { color: BLUE, fontFamily: FONT, fontSize: 12 }, providerCard: { minHeight: 132, backgroundColor: '#fff', borderRadius: 11, padding: 8, marginBottom: 13, flexDirection: 'row', gap: 10, borderBottomWidth: 2, borderBottomColor: '#bddaff' }, providerThumb: { width: 112, height: 112, borderRadius: 5 }, providerCardInfo: { flex: 1, paddingVertical: 1 }, providerTitleRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 2 }, providerCardName: { color: INK, fontFamily: FONT, fontSize: 16, fontWeight: '900', flex: 1 }, cardRating: { color: '#ff9800', fontSize: 12, fontWeight: '900', fontFamily: FONT }, providerService: { fontFamily: FONT, color: '#596375', fontSize: 12, lineHeight: 15 }, providerFooter: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 'auto', flexWrap: 'wrap' }, distance: { fontFamily: FONT, fontSize: 12, color: '#758092' }, free: { color: '#00a53a', fontFamily: FONT, fontWeight: '900', fontSize: 10, backgroundColor: '#e7faed', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }, priceTag: { color: '#005ab9', fontFamily: FONT, fontWeight: '900', fontSize: 10, backgroundColor: '#e8f2ff', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 9 }, tabBar: { height: 70, backgroundColor: '#fff', flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: 1, borderTopColor: '#ebeff4' }, tab: { alignItems: 'center', justifyContent: 'center', minWidth: 56, gap: 3 }, tabText: { fontFamily: FONT, color: '#8da0bb', fontSize: 10 }, tabTextActive: { color: BLUE, fontWeight: '800' },
+  filterBody: { padding: 23, paddingBottom: 128 }, filterTitle: { fontFamily: FONT, fontSize: 20, color: INK, fontWeight: '900', letterSpacing: -.7, marginBottom: 24 }, typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 23 }, typeTile: { height: 54, width: '47%', backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 17, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, typeTileActive: { backgroundColor: '#2178df' }, typeTileText: { fontFamily: FONT, color: '#4f5969', fontWeight: '500', fontSize: 14 }, typeTileTextActive: { color: '#fff' }, typeMark: { color: '#576271' }, typeMarkActive: { color: '#fff' }, filterCard: { height: 148, borderRadius: 17, backgroundColor: '#f0f2f6', padding: 25, marginBottom: 21 }, filterCardTop: { flexDirection: 'row', justifyContent: 'space-between' }, filterLabel: { fontFamily: FONT, fontWeight: '500', color: '#596375', fontSize: 14 }, slider: { marginTop: 30, height: 8, borderRadius: 5, backgroundColor: '#d4d9e0' }, sliderActive: { width: '50%', height: '100%', borderRadius: 5, backgroundColor: BLUE }, sliderKnob: { position: 'absolute', left: '49%', top: -5, width: 18, height: 18, borderRadius: 9, borderWidth: 4, borderColor: BLUE, backgroundColor: '#fff' }, sliderLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 23 }, ratingRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 23 }, ratingBox: { height: 83, width: '31%', borderRadius: 12, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', gap: 6 }, ratingBoxSelected: { backgroundColor: BLUE, shadowColor: BLUE, shadowOpacity: .25, shadowRadius: 6, elevation: 5 }, ratingValue: { fontFamily: FONT, color: '#424c5e', fontWeight: '900', fontSize: 20 }, ratingValueSelected: { color: '#fff' }, ratingDetail: { fontFamily: FONT, color: '#3d4655', fontSize: 12, fontWeight: '500' }, ratingDetailSelected: { color: '#fff' },
+  providerBody: { paddingBottom: 136 }, heroImage: { width: '100%', height: 278, backgroundColor: '#bfdbff' }, providerIntro: { backgroundColor: '#fff', borderRadius: 25, marginHorizontal: 23, marginTop: -84, padding: 25, shadowColor: '#7594bc', shadowOpacity: .21, shadowOffset: { width: 0, height: 8 }, shadowRadius: 15, elevation: 5 }, pill: { alignSelf: 'flex-start', paddingHorizontal: 11, paddingVertical: 5, borderRadius: 15, backgroundColor: '#e5f2ff' }, pillText: { fontFamily: FONT, color: '#0063b7', fontSize: 12, letterSpacing: .6, fontWeight: '900' }, providerName: { fontFamily: FONT, color: INK, fontSize: 24, letterSpacing: -.8, fontWeight: '900', marginTop: 9 }, providerMeta: { marginTop: 13, flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap', fontFamily: FONT, color: '#4e596c' }, star: { color: '#ff9b00', fontSize: 25 }, metaStrong: { fontFamily: FONT, fontWeight: '900', color: '#536073' }, turnaround: { fontFamily: FONT, fontSize: 14, fontWeight: '900', color: '#00728a', marginTop: 5 }, sectionHeading: { marginHorizontal: 23, marginTop: 22, color: INK, fontFamily: FONT, fontWeight: '900', fontSize: 20, letterSpacing: -.5 }, headingAccent: { color: BLUE }, serviceInfo: { minHeight: 96, backgroundColor: '#f0f2f6', marginHorizontal: 23, marginTop: 16, borderRadius: 23, padding: 17, flexDirection: 'row', alignItems: 'center', gap: 14 }, serviceIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: '#dcebfb', alignItems: 'center', justifyContent: 'center' }, serviceInfoCopy: { flex: 1 }, serviceInfoTitle: { fontFamily: FONT, color: INK, fontSize: 20, fontWeight: '500' }, serviceInfoDetail: { fontFamily: FONT, color: '#596476', fontSize: 14, lineHeight: 19, marginTop: 4 }, serviceInfoPrice: { fontFamily: FONT, color: '#0062bd', fontWeight: '900', fontSize: 20 }, serviceInfoUnit: { fontSize: 12, color: '#475260', fontWeight: '400' }, aboutCard: { marginHorizontal: 23, marginTop: 18, borderRadius: 22, backgroundColor: '#f0f2f6', padding: 24 }, aboutText: { fontFamily: FONT, color: '#596476', fontSize: 14, lineHeight: 21 }, areaCard: { backgroundColor: '#fff', marginHorizontal: 23, borderRadius: 24, marginTop: 20, padding: 25 }, areaTitle: { fontFamily: FONT, fontWeight: '900', fontSize: 20, color: INK }, addressPill: { alignSelf: 'flex-start', fontFamily: FONT, color: '#596476', fontSize: 12, marginTop: 17, borderRadius: 20, backgroundColor: '#e8ebef', paddingHorizontal: 12, paddingVertical: 5 }, mapArea: { height: 200, borderRadius: 15, backgroundColor: '#d9e5c0', marginTop: 14, alignItems: 'center', justifyContent: 'center' }, mapHome: { color: '#fff', backgroundColor: BLUE, fontSize: 26, height: 43, width: 43, borderRadius: 25, textAlign: 'center', paddingTop: 7, overflow: 'hidden' }, hoursCard: { borderWidth: 1, borderColor: '#cee0ee', borderRadius: 23, backgroundColor: '#edf8fd', margin: 23, padding: 24 }, hoursTitle: { fontFamily: FONT, color: '#00708d', fontWeight: '900', fontSize: 20 }, hoursText: { fontFamily: FONT, color: '#516071', fontSize: 14, lineHeight: 20, marginTop: 12 },
+  bookingBottom: { backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e0e3e8', padding: 12 }, subtotal: { fontFamily: FONT, color: '#718096', fontSize: 14, marginBottom: 8 }, bookingBottomRow: { flexDirection: 'row', gap: 12, alignItems: 'center', justifyContent: 'center' }, bookingContinue: { flex: 1, minHeight: 56, borderRadius: 16 }, backLabel: { fontFamily: FONT, fontWeight: '900', color: '#4f5969', fontSize: 16, paddingHorizontal: 10 }, bookingBody: { padding: 16, gap: 13, paddingBottom: 120 }, serviceChoice: { minHeight: 76, backgroundColor: '#fff', borderRadius: 25, borderWidth: 1.5, borderColor: '#e0e4e9', padding: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, serviceChoiceTitle: { fontFamily: FONT, color: '#0f182b', fontSize: 20, fontWeight: '500' }, serviceChoiceMeta: { fontFamily: FONT, color: '#758197', fontSize: 14, marginTop: 4 }, servicePrice: { fontFamily: FONT, color: '#005ab4', fontWeight: '900', fontSize: 20 }, loadCard: { minHeight: 83, borderRadius: 22, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#e0e4e9', padding: 19, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, stepper: { flexDirection: 'row', alignItems: 'center', gap: 16 }, stepperMinus: { height: 48, width: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', shadowColor: '#7b8491', shadowOpacity: .23, shadowRadius: 7, elevation: 3 }, stepperPlus: { height: 48, width: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: BLUE, shadowColor: BLUE, shadowOpacity: .25, shadowRadius: 7, elevation: 4 }, stepperText: { color: '#172033', fontSize: 30, marginTop: -4 }, stepperPlusText: { color: '#fff', fontSize: 29, marginTop: -3 }, loadNumber: { fontFamily: FONT, fontSize: 24, color: '#10172b' }, instructionsTitle: { fontFamily: FONT, color: '#1a2436', fontSize: 20, fontWeight: '500', marginBottom: -2 }, instructions: { backgroundColor: '#fff', minHeight: 96, borderWidth: 1.5, borderColor: '#e0e4e9', borderRadius: 19, padding: 17, fontFamily: FONT, color: INK, fontSize: 16, textAlignVertical: 'top' }, methodBody: { padding: 16, gap: 16 }, methodChoice: { minHeight: 105, borderRadius: 27, borderWidth: 1.5, borderColor: '#e0e4e9', backgroundColor: '#fff', padding: 17, flexDirection: 'row', gap: 15, position: 'relative' }, methodIcon: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#f3f6fb', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }, methodIconSelected: { backgroundColor: BLUE }, methodCopy: { flex: 1 }, methodTitle: { color: '#111a2d', fontFamily: FONT, fontSize: 20, fontWeight: '500', lineHeight: 25 }, methodText: { fontFamily: FONT, color: '#758197', fontSize: 14, lineHeight: 20, marginTop: 3 }, addressTitle: { fontFamily: FONT, color: '#66738a', fontSize: 14, fontWeight: '500', letterSpacing: .4, marginTop: 3 }, addressChoice: { minHeight: 70, backgroundColor: '#fff', borderRadius: 20, borderWidth: 1.5, borderColor: '#e1e5eb', padding: 16 }, addressChoiceTitle: { color: '#111a2d', fontFamily: FONT, fontWeight: '500', fontSize: 20 }, addressChoiceText: { color: '#758197', fontFamily: FONT, fontSize: 14, marginTop: 4 },
+  scheduleBody: { padding: 23, paddingBottom: 149 }, scheduleTitle: { color: INK, fontFamily: FONT, fontSize: 24, fontWeight: '900', letterSpacing: -.7, marginTop: 18 }, scheduleIntro: { fontFamily: FONT, color: '#4f5b6c', fontSize: 14, lineHeight: 20, marginTop: 4 }, calendar: { marginTop: 25, backgroundColor: '#fff', borderRadius: 15, padding: 30 }, calendarHeader: { flexDirection: 'row', justifyContent: 'space-between' }, calendarMonth: { fontFamily: FONT, color: INK, fontSize: 20, fontWeight: '500' }, calendarArrows: { color: BLUE, fontFamily: FONT, fontWeight: '900', fontSize: 28, lineHeight: 19 }, week: { marginTop: 43, flexDirection: 'row', justifyContent: 'space-between' }, days: { marginTop: 25, flexDirection: 'row', flexWrap: 'wrap' }, day: { width: '14.28%', height: 55, fontFamily: FONT, color: '#222a35', fontWeight: '500', textAlign: 'center', paddingTop: 8, fontSize: 16 }, dayMuted: { color: '#d9dde4' }, daySelected: { color: '#fff', backgroundColor: BLUE, borderRadius: 14, overflow: 'hidden', shadowColor: BLUE, shadowOpacity: .28, shadowRadius: 4, elevation: 3 }, dayBlue: { color: BLUE }, slotPanel: { backgroundColor: '#f0f2f6', borderRadius: 15, padding: 24, marginTop: 20 }, slotHeading: { color: INK, fontFamily: FONT, fontSize: 20, fontWeight: '900', marginBottom: 17 }, slot: { minHeight: 70, borderRadius: 13, backgroundColor: '#fff', paddingHorizontal: 17, marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, slotSelected: { backgroundColor: '#e5f0ff', borderWidth: 2, borderColor: BLUE }, slotTitle: { fontFamily: FONT, color: INK, fontWeight: '500', fontSize: 14 }, slotTime: { fontFamily: FONT, color: '#4c586a', fontSize: 12, marginTop: 2 }, slotCheck: { color: BLUE, fontSize: 21 }, moreSlots: { minHeight: 49, borderRadius: 12, backgroundColor: '#e6e8ec', alignItems: 'center', justifyContent: 'center' },
+  summaryBody: { padding: 16, gap: 16 }, summaryCard: { backgroundColor: '#fff', borderRadius: 25, borderWidth: 1.5, borderColor: '#e0e4e9', padding: 20, shadowColor: '#8490a2', shadowOpacity: .09, shadowOffset: { width: 0, height: 7 }, shadowRadius: 9, elevation: 2 }, summaryRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginBottom: 15, alignItems: 'flex-start' }, summaryName: { flex: 1, color: '#758197', fontFamily: FONT, fontSize: 16, lineHeight: 22 }, summaryValue: { width: '56%', textAlign: 'right', color: '#10182d', fontFamily: FONT, fontSize: 16, lineHeight: 22 }, summaryDivider: { height: 1.5, backgroundColor: '#e0e4e9', marginBottom: 15 }, summaryTotal: { color: '#10182d', fontFamily: FONT, fontSize: 20, fontWeight: '800' }, paymentBody: { padding: 16, gap: 16 }, amountCard: { minHeight: 125, borderRadius: 25, borderWidth: 1.5, borderColor: '#e0e4e9', backgroundColor: '#fff', padding: 20 }, amountNote: { color: '#758197', fontFamily: FONT, fontSize: 15, lineHeight: 22, marginTop: 2 },
+  confirmed: { flex: 1, backgroundColor: '#fff', alignItems: 'center', paddingHorizontal: 24, paddingTop: '24%' }, checkCircle: { width: 98, height: 98, borderRadius: 49, backgroundColor: '#e8f9ef', color: '#2cc45b', fontSize: 60, textAlign: 'center', paddingTop: 15, fontWeight: '700', overflow: 'hidden' }, confirmedTitle: { fontFamily: FONT, color: '#10182d', fontWeight: '900', fontSize: 24, letterSpacing: -.8, marginTop: 34, textAlign: 'center' }, confirmedCopy: { fontFamily: FONT, color: '#758197', fontSize: 16, lineHeight: 24, textAlign: 'center', marginTop: 14, marginBottom: 26 }, confirmedButton: { alignSelf: 'stretch', marginTop: 29, minHeight: 62, borderRadius: 18 }, backHome: { fontFamily: FONT, color: '#111a2d', fontSize: 16, fontWeight: '500', marginTop: 27 },
+  ordersHeader: { backgroundColor: '#fff', marginTop: 20, paddingTop: 24, borderBottomWidth: 1, borderBottomColor: '#e3e6eb' }, ordersTitle: { paddingHorizontal: 24, color: '#111a2d', fontFamily: FONT, fontSize: 24, fontWeight: '900', letterSpacing: -.8, marginBottom: 20 }, orderTabs: { flexDirection: 'row', gap: 12, paddingHorizontal: 24, paddingBottom: 16 }, ordersBody: { padding: 16, gap: 16, paddingBottom: 90 }, orderCard: { minHeight: 132, backgroundColor: '#fff', borderRadius: 25, borderWidth: 1.5, borderColor: '#e0e4e9', padding: 20, gap: 12, shadowColor: '#8a97a9', shadowOpacity: .08, shadowRadius: 8, elevation: 2 }, orderService: { color: '#111a2d', fontFamily: FONT, fontSize: 20, fontWeight: '500', lineHeight: 26 }, orderProvider: { color: '#758197', fontFamily: FONT, fontSize: 14, marginTop: 4, lineHeight: 20 }, orderFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto' }, orderSlot: { color: '#758197', fontFamily: FONT, fontSize: 14 }, orderTotal: { color: '#111a2d', fontFamily: FONT, fontWeight: '900', fontSize: 16 },
+  trackBottom: { padding: 12, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e2e6eb', flexDirection: 'row', gap: 12 }, chatShortcut: { width: 82, height: 58, borderRadius: 20, borderWidth: 1.5, borderColor: '#e0e4e9', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', shadowColor: '#7e8a9a', shadowOpacity: .15, shadowRadius: 5, elevation: 3 }, trackCta: { flex: 1, height: 58, borderRadius: 16 }, trackBody: { padding: 16, gap: 16, paddingBottom: 85 }, trackCard: { backgroundColor: '#fff', borderRadius: 25, borderWidth: 1.5, borderColor: '#e0e4e9', padding: 20 }, trackHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginBottom: 16 }, trackingCard: { backgroundColor: '#fff', borderRadius: 25, borderWidth: 1.5, borderColor: '#e0e4e9', padding: 20 }, trackingTitle: { color: '#111a2d', fontFamily: FONT, fontSize: 20, fontWeight: '900', marginBottom: 25 }, timelineItem: { flexDirection: 'row', gap: 14, minHeight: 94 }, timelineRail: { alignItems: 'center', width: 40 }, timelineDot: { height: 40, width: 40, borderRadius: 20, backgroundColor: '#f0f3f8', alignItems: 'center', justifyContent: 'center' }, timelineDotActive: { backgroundColor: BLUE }, timelineDotText: { color: '#758197', fontFamily: FONT, fontSize: 17 }, timelineLine: { width: 4, flex: 1, backgroundColor: '#e1e5ed', marginVertical: 5 }, timelineLineActive: { backgroundColor: BLUE }, timelineTitle: { color: '#758197', fontFamily: FONT, fontWeight: '500', fontSize: 20, lineHeight: 26 }, timelineTitleActive: { color: '#111a2d' }, timelineCopy: { color: '#758197', fontFamily: FONT, fontSize: 14, lineHeight: 20, marginTop: 3 },
+  chatBody: { flexGrow: 1, padding: 16, gap: 13 }, today: { fontFamily: FONT, color: '#758197', fontSize: 16, textAlign: 'center', marginBottom: 8 }, message: { padding: 17, borderRadius: 23, maxWidth: '86%', shadowColor: '#7c8998', shadowOpacity: .12, shadowOffset: { width: 0, height: 7 }, shadowRadius: 11, elevation: 2 }, theirs: { backgroundColor: '#fff', alignSelf: 'flex-start', borderBottomLeftRadius: 8 }, mine: { backgroundColor: BLUE, alignSelf: 'flex-end', borderBottomRightRadius: 8 }, messageText: { fontFamily: FONT, color: '#111a2d', fontSize: 17, lineHeight: 25 }, mineText: { color: '#fff' }, messageTime: { fontFamily: FONT, color: '#758197', fontSize: 15, textAlign: 'right', marginTop: 8 }, composer: { minHeight: 82, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e3e6eb', padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }, attach: { height: 52, width: 52, borderRadius: 26, backgroundColor: '#f1f4f8', alignItems: 'center', justifyContent: 'center' }, composerInput: { flex: 1, height: 52, borderRadius: 26, borderWidth: 1.5, borderColor: '#e0e4e9', backgroundColor: '#fff', paddingHorizontal: 18, fontFamily: FONT, color: INK, fontSize: 17 }, sendButton: { height: 52, width: 52, borderRadius: 26, backgroundColor: BLUE, alignItems: 'center', justifyContent: 'center', shadowColor: BLUE, shadowOpacity: .27, shadowRadius: 6, elevation: 4 },
+  reviewsBody: { padding: 16, gap: 16, paddingBottom: 55 }, scoreCard: { minHeight: 113, backgroundColor: '#fff', borderRadius: 25, borderWidth: 1.5, borderColor: '#e0e4e9', alignItems: 'center', justifyContent: 'center' }, score: { fontFamily: FONT, color: '#111a2d', fontSize: 39, fontWeight: '800' }, scoreMeta: { color: '#ff9a00', fontFamily: FONT, fontSize: 20, fontWeight: '800', marginTop: 8 }, scoreNumber: { color: '#111a2d' }, reviewCard: { borderRadius: 25, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#e0e4e9', padding: 20 }, reviewTop: { flexDirection: 'row', justifyContent: 'space-between' }, reviewName: { color: '#111a2d', fontFamily: FONT, fontWeight: '800', fontSize: 20 }, reviewPlace: { color: '#758197', fontFamily: FONT, fontSize: 15, marginTop: 4 }, reviewRating: { color: '#ff9a00', fontFamily: FONT, fontSize: 18, fontWeight: '800' }, reviewCopy: { color: '#111a2d', fontFamily: FONT, fontSize: 18, lineHeight: 28, marginTop: 17 },
+  profileBody: { padding: 20, paddingTop: 24, paddingBottom: 90, gap: 16 }, profileTitle: { fontFamily: FONT, fontSize: 24, fontWeight: '900', color: INK, letterSpacing: -.8, marginBottom: 4 }, profileCard: { backgroundColor: '#e8f2ff', borderRadius: 20, padding: 18, flexDirection: 'row', alignItems: 'center', gap: 14 }, profileAvatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: BLUE, alignItems: 'center', justifyContent: 'center' }, profileInitials: { color: '#fff', fontFamily: FONT, fontWeight: '900', fontSize: 20 }, profileName: { fontFamily: FONT, color: INK, fontWeight: '900', fontSize: 18 }, profileMeta: { fontFamily: FONT, color: '#596476', fontSize: 13, marginTop: 2 }, profileGroup: { backgroundColor: '#fff', borderRadius: 20, borderWidth: 1.5, borderColor: '#e0e4e9', overflow: 'hidden' }, profileRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 18, paddingHorizontal: 18 }, profileRowIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#e8f2ff', alignItems: 'center', justifyContent: 'center' }, profileRowTitle: { fontFamily: FONT, color: INK, fontWeight: '700', fontSize: 15 }, profileRowSub: { fontFamily: FONT, color: '#758197', fontSize: 13, marginTop: 2 }, profileDivider: { height: 1, backgroundColor: '#e8ebf0', marginHorizontal: 18 }, logoutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 56, borderRadius: 16, borderWidth: 1.5, borderColor: '#e0e4e9', backgroundColor: '#fff' }, logoutText: { fontFamily: FONT, color: '#c0392b', fontWeight: '700', fontSize: 15 },
 });
