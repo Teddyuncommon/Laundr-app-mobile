@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 
 import { laundrApi, providers, serviceCatalog, seedOrders, type LaundrOrder, type Provider, type ServiceKey } from '@/data/laundr-api';
+import ProviderApp from './provider-app';
 
 const BLUE = '#0967ce';
 const BLUE_DARK = '#0756b3';
@@ -30,9 +31,10 @@ const FONT = Platform.select({
 });
 
 type Screen =
-  | 'splash' | 'onboarding' | 'login' | 'signup' | 'accountType' | 'home' | 'filter'
-  | 'provider' | 'service' | 'collection' | 'delivery' | 'schedule' | 'summary' | 'payment'
+  | 'splash' | 'onboarding' | 'roleSelect' | 'signup' | 'login' | 'forgotPassword' | 'otp' | 'createPassword' | 'accountCreated' | 'completeProfile' | 'locationPermission'
+  | 'home' | 'filter' | 'allProviders' | 'provider' | 'service' | 'collection' | 'delivery' | 'schedule' | 'summary' | 'payment'
   | 'confirmed' | 'orders' | 'track' | 'chat' | 'reviews' | 'profile';
+type UserRole = 'customer' | 'provider' | null;
 type NavigationContextValue = { go: (screen: Screen) => void; screen: Screen };
 const NavigationContext = createContext<NavigationContextValue | null>(null);
 type Booking = {
@@ -58,7 +60,8 @@ export default function IndexScreen() {
   const [orders, setOrders] = useState<LaundrOrder[]>(seedOrders);
   const [selectedOrder, setSelectedOrder] = useState<LaundrOrder>(seedOrders[0]);
   const [filters, setFilters] = useState<string[]>(['Washing', 'Dry Cleaning']);
-  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [userRole, setUserRole] = useState<UserRole>(null);
+  const [isProvider, setIsProvider] = useState(false);
 
   useEffect(() => {
     const splashTimer = setTimeout(() => setScreen('onboarding'), 1050);
@@ -84,12 +87,26 @@ export default function IndexScreen() {
     go('confirmed');
   }
 
+  function finishAuth() {
+    if (userRole === 'provider') { setIsProvider(true); } else { go('home'); }
+  }
+
+  if (isProvider) return <ProviderApp onLogout={() => { setIsProvider(false); setUserRole(null); setScreen('login'); }} />;
+
   let content: React.ReactNode;
   if (screen === 'splash') content = <Splash />;
-  else if (screen === 'onboarding') content = <Onboarding step={onboarding} setStep={setOnboarding} complete={() => go('login')} />;
-  else if (screen === 'login' || screen === 'signup') content = <Auth screen={screen} go={go} mode={authMode} setMode={setAuthMode} />;
-  else if (screen === 'accountType') content = <AccountType go={go} />;
-  else if (screen === 'home') content = <Home go={go} orders={orders} />;
+  else if (screen === 'onboarding') content = <Onboarding step={onboarding} setStep={setOnboarding} complete={() => go('roleSelect')} />;
+  else if (screen === 'roleSelect') content = <RoleSelect go={go} role={userRole} setRole={setUserRole} />;
+  else if (screen === 'signup') content = <SignUp go={go} role={userRole} />;
+  else if (screen === 'login') content = <Login go={go} finishAuth={finishAuth} />;
+  else if (screen === 'forgotPassword') content = <ForgotPassword go={go} />;
+  else if (screen === 'otp') content = <OtpVerification go={go} />;
+  else if (screen === 'createPassword') content = <CreatePassword go={go} />;
+  else if (screen === 'accountCreated') content = <AccountCreated go={go} role={userRole} />;
+  else if (screen === 'completeProfile') content = <CompleteProfile go={go} role={userRole} />;
+  else if (screen === 'locationPermission') content = <LocationPermission go={go} finishAuth={finishAuth} />;
+  else if (screen === 'home') content = <Home go={go} orders={orders} selectProvider={(p) => { setBooking({ ...booking, provider: p }); go('provider'); }} />;
+  else if (screen === 'allProviders') content = <AllProviders go={go} selectProvider={(p) => { setBooking({ ...booking, provider: p }); go('provider'); }} />;
   else if (screen === 'filter') content = <Filter go={go} filters={filters} setFilters={setFilters} />;
   else if (screen === 'provider') content = <ProviderDetails go={go} provider={booking.provider} />;
   else if (screen === 'service') content = <SelectService go={go} booking={booking} setBooking={setBooking} subtotal={subtotal} />;
@@ -119,7 +136,7 @@ function Onboarding({ step, setStep, complete }: { step: number; setStep: (value
     { title: ['Track your ', 'Laundry', ' easily'], text: 'Stay informed throughout the entire process. The app allows you to track the progress of your laundry from pickup to completion, so you always know when your clothes are being washed, ready for collection, or on their way back to you.', label: 'Get Started' },
   ][step];
   return <Page scroll={false} style={styles.onboardPage}>
-    <View style={styles.topBare}><IconButton name="arrow_back" onPress={() => step > 0 && setStep(step - 1)} /></View>
+    <View style={styles.onboardNav}><IconButton name="arrow_back" onPress={() => step > 0 && setStep(step - 1)} /></View>
     {step === 0 ? <DiscoverArt /> : step === 1 ? <FlowArt /> : <TrackArt />}
     <View style={styles.progressLine}><Dots count={3} active={step} /><Text style={styles.stepText}>Step {step + 1} of 3</Text></View>
     <Text style={styles.onboardTitle}>{content.title[0]}<Text style={styles.blue}>{content.title[1]}</Text>{content.title[2]}</Text>
@@ -128,47 +145,260 @@ function Onboarding({ step, setStep, complete }: { step: number; setStep: (value
   </Page>;
 }
 
-function Auth({ screen, go, mode, setMode }: { screen: Screen; go: (screen: Screen) => void; mode: 'login' | 'signup'; setMode: (mode: 'login' | 'signup') => void }) {
-  const isLogin = screen === 'login';
-  return <Page><View style={styles.authContent}><IconButton name="arrow_back" onPress={() => go('onboarding')} />
-    <Text style={styles.authTitle}>{isLogin ? 'Welcome Back' : 'Create Account'}</Text>
-    <Text style={styles.authSubtitle}>{isLogin ? 'Login to your digital concierge and manage your fresh wardrobe.' : 'Join the premium circle of effortless garment care and maintenance'}</Text>
-    {!isLogin && <Field label="Name" icon="person" placeholder="john doe" />}
+function RoleSelect({ go, role, setRole }: { go: (screen: Screen) => void; role: UserRole; setRole: (r: UserRole) => void }) {
+  return <Page scroll={false} style={styles.onboardPage}>
+    <View style={styles.onboardNav}><IconButton name="arrow_back" onPress={() => go('onboarding')} /></View>
+    <ScrollView contentContainerStyle={styles.roleBody}>
+      <Text style={styles.roleTitle}>Choose Your{'\n'}<Text style={styles.blue}>Account Type</Text></Text>
+      <Text style={styles.roleSubtitle}>Select how you want to use Laundr. This determines your experience.</Text>
+      <Pressable onPress={() => setRole('customer')} style={[styles.roleCard, role === 'customer' && styles.roleCardActive]}>
+        <View style={[styles.roleIcon, role === 'customer' && styles.roleIconActive]}><AppIcon name="local_laundry_service" size={30} color={role === 'customer' ? '#ffffff' : BLUE} /></View>
+        <View style={styles.roleCopy}>
+          <Text style={styles.roleCardTitle}>I Need Laundry Services</Text>
+          <Text style={styles.roleCardType}>Customer Account</Text>
+          <Text style={styles.roleCardText}>Find, book, and manage laundry services from trusted providers near you.</Text>
+        </View>
+        {role === 'customer' && <View style={styles.roleCheck}><Text style={styles.roleCheckText}>✓</Text></View>}
+      </Pressable>
+      <Pressable onPress={() => setRole('provider')} style={[styles.roleCard, role === 'provider' && styles.roleCardActive]}>
+        <View style={[styles.roleIcon, role === 'provider' && styles.roleIconActive]}><AppIcon name="storefront" size={30} color={role === 'provider' ? '#ffffff' : BLUE} /></View>
+        <View style={styles.roleCopy}>
+          <Text style={styles.roleCardTitle}>I Provide Laundry Services</Text>
+          <Text style={styles.roleCardType}>Provider Account</Text>
+          <Text style={styles.roleCardText}>Receive bookings, manage orders, grow your laundry business, and earn income.</Text>
+        </View>
+        {role === 'provider' && <View style={styles.roleCheck}><Text style={styles.roleCheckText}>✓</Text></View>}
+      </Pressable>
+      <View style={styles.tip}><AppIcon name="verified_user" size={24} color={BLUE} /><Text style={styles.tipText}>You can change your account type later from settings.</Text></View>
+    </ScrollView>
+    <View style={styles.roleBottom}><Primary label="Continue" onPress={() => role && go('signup')} style={[!role && styles.btnDisabled]} /></View>
+  </Page>;
+}
+
+function SignUp({ go, role }: { go: (screen: Screen) => void; role: UserRole }) {
+  return <Page><ScrollView contentContainerStyle={styles.authContent}>
+    <IconButton name="arrow_back" onPress={() => go('roleSelect')} />
+    <View style={styles.roleBadge}><AppIcon name={role === 'provider' ? 'storefront' : 'local_laundry_service'} size={16} color={BLUE} /><Text style={styles.roleBadgeText}>Creating {role === 'provider' ? 'Provider' : 'Customer'} Account</Text></View>
+    <Text style={styles.authTitle}>Create Account</Text>
+    <Text style={styles.authSubtitle}>Join Laundr and experience effortless garment care.</Text>
+    <View style={styles.nameRow}><View style={styles.nameHalf}><Field label="First Name" icon="person" placeholder="Anesu" /></View><View style={styles.nameHalf}><Field label="Last Name" icon="person" placeholder="Marimo" /></View></View>
     <Field label="Email" icon="mail" placeholder="name@company.com" />
-    {!isLogin && <Field label="Phone Number" icon="phone" placeholder="+1 (555) 000-0000" />}
-    <Field label={isLogin ? 'Password' : 'Secure Password'} icon="lock" placeholder="••••••••" secure />
-    {isLogin && <Text style={styles.forgot}>Forgot Password?</Text>}
-    <Primary label={isLogin ? 'Login' : 'Sign Up'} onPress={() => isLogin ? go('home') : go('accountType')} style={styles.authButton} />
-    {isLogin && <><Divider label="Or Continue With" /><View style={styles.socialRow}><Secondary label="Google" /><Secondary label="Facebook" /></View></>}
-    <Pressable onPress={() => { setMode(isLogin ? 'signup' : 'login'); go(isLogin ? 'signup' : 'login'); }}><Text style={styles.authSwitch}>{isLogin ? "Don't have an account? " : 'Already have an account? '}<Text style={styles.blueBold}>{isLogin ? 'Sign Up' : 'Login'}</Text></Text></Pressable>
-    {isLogin ? <View style={styles.legal}><Text>Privacy Policy        Terms Of Service</Text><Text>© 2026 Laundr Marketplace Inc.</Text></View> : <Text style={styles.terms}>By creating an account, you agree to our{`\n`}Terms of Service and Privacy Policy.</Text>}
+    <Field label="Phone Number" icon="phone" placeholder="+263 77 000 0000" />
+    <Field label="Password" icon="lock" placeholder="••••••••" secure />
+    <Field label="Confirm Password" icon="lock" placeholder="••••••••" secure />
+    {role === 'provider' && <><Field label="Business Name" icon="business_center" placeholder="e.g. SwiftWash & Dry" /><Field label="Business Category (optional)" icon="category" placeholder="e.g. Premium Laundry" /></>}
+    <Primary label="Create Account" onPress={() => go('otp')} style={styles.authButton} />
+    <Text style={styles.terms}>By creating an account, you agree to our{'\n'}Terms of Service and Privacy Policy.</Text>
+    <Pressable onPress={() => go('login')}><Text style={styles.authSwitch}>Already have an account? <Text style={styles.blueBold}>Login</Text></Text></Pressable>
+  </ScrollView></Page>;
+}
+
+function Login({ go, finishAuth }: { go: (screen: Screen) => void; finishAuth: () => void }) {
+  const [remember, setRemember] = useState(false);
+  return <Page><ScrollView contentContainerStyle={styles.authContent}>
+    <IconButton name="arrow_back" onPress={() => go('roleSelect')} />
+    <Text style={styles.authTitle}>Welcome Back</Text>
+    <Text style={styles.authSubtitle}>Login to your digital concierge and manage your fresh wardrobe.</Text>
+    <Field label="Email or Phone" icon="mail" placeholder="name@company.com" />
+    <Field label="Password" icon="lock" placeholder="••••••••" secure />
+    <View style={styles.loginOptions}>
+      <Pressable onPress={() => setRemember(!remember)} style={styles.rememberRow}>
+        <View style={[styles.checkbox, remember && styles.checkboxActive]}>{remember && <Text style={styles.checkMark}>✓</Text>}</View>
+        <Text style={styles.rememberText}>Remember me</Text>
+      </Pressable>
+      <Pressable onPress={() => go('forgotPassword')}><Text style={styles.forgot}>Forgot Password?</Text></Pressable>
+    </View>
+    <Primary label="Login" onPress={finishAuth} style={styles.authButton} />
+    <Divider label="Or Continue With" />
+    <View style={styles.socialRow}><Secondary label="Google" /><Secondary label="Facebook" /></View>
+    <Pressable onPress={() => go('signup')}><Text style={styles.authSwitch}>Don't have an account? <Text style={styles.blueBold}>Sign Up</Text></Text></Pressable>
+    <View style={styles.legal}><Text style={styles.legalText}>Privacy Policy        Terms Of Service</Text><Text style={styles.legalText}>© 2026 Laundr Marketplace Inc.</Text></View>
+  </ScrollView></Page>;
+}
+
+function ForgotPassword({ go }: { go: (screen: Screen) => void }) {
+  return <Page><View style={styles.authContent}>
+    <IconButton name="arrow_back" onPress={() => go('login')} />
+    <View style={styles.forgotIcon}><AppIcon name="lock_reset" size={40} color={BLUE} /></View>
+    <Text style={styles.authTitle}>Forgot Password?</Text>
+    <Text style={styles.authSubtitle}>Enter your email or phone number and we'll send you a verification code to reset your password.</Text>
+    <Field label="Email or Phone Number" icon="mail" placeholder="name@company.com" />
+    <Primary label="Send Verification Code" onPress={() => go('otp')} style={styles.authButton} />
+    <Pressable onPress={() => go('login')}><Text style={styles.authSwitch}>Remember your password? <Text style={styles.blueBold}>Login</Text></Text></Pressable>
   </View></Page>;
 }
 
-function AccountType({ go }: { go: (screen: Screen) => void }) {
-  const [customer, setCustomer] = useState(true);
-  return <Page><BookingHeader title="Create your account" subtitle="Step 1 of 4" onBack={() => go('signup')} />
-    <View style={styles.choiceBody}><Text style={styles.choiceLead}>How will you use Laundr? This sets up your onboarding and dashboard.</Text>
-      <Choice selected={customer} icon="shopping_bag" title="I Need Laundry Services" subtitle="Customer Account" text="Find, book and manage laundry services from trusted providers near you." onPress={() => setCustomer(true)} />
-      <Choice selected={!customer} icon="business_center" title="I Provide Laundry Services" subtitle="Provider Account" text="Receive bookings, manage orders, grow your laundry business and earn income." onPress={() => setCustomer(false)} />
-      <View style={styles.tip}><AppIcon name="verified_user" size={27} color={BLUE} /><Text style={styles.tipText}>Providers complete a verification step before receiving bookings. You can add a provider profile later from settings.</Text></View>
-    </View><BottomButton label="Continue" onPress={() => go('home')} /></Page>;
+function OtpVerification({ go }: { go: (screen: Screen) => void }) {
+  const [otp, setOtp] = useState(['', '', '', '', '', '']);
+  const [countdown, setCountdown] = useState(45);
+  useEffect(() => { const t = setInterval(() => setCountdown((c) => c > 0 ? c - 1 : 0), 1000); return () => clearInterval(t); }, []);
+  return <Page><View style={styles.authContent}>
+    <IconButton name="arrow_back" onPress={() => go('signup')} />
+    <View style={styles.forgotIcon}><AppIcon name="verified" size={40} color={BLUE} /></View>
+    <Text style={styles.authTitle}>Verify Your Account</Text>
+    <Text style={styles.authSubtitle}>We've sent a 6-digit code to your email. Enter it below to verify your account.</Text>
+    <View style={styles.otpRow}>
+      {otp.map((digit, i) => <TextInput key={i} style={[styles.otpBox, digit && styles.otpBoxFilled]} maxLength={1} keyboardType="number-pad" value={digit} onChangeText={(t) => { const next = [...otp]; next[i] = t; setOtp(next); }} />)}
+    </View>
+    <Text style={styles.otpTimer}>{countdown > 0 ? `Resend code in ${countdown}s` : ''}</Text>
+    {countdown === 0 && <Pressable onPress={() => setCountdown(45)}><Text style={styles.resendLink}>Resend Code</Text></Pressable>}
+    <Primary label="Verify" onPress={() => go('accountCreated')} style={styles.authButton} />
+  </View></Page>;
 }
 
-function Home({ go, orders }: { go: (screen: Screen) => void; orders: LaundrOrder[] }) {
+function CreatePassword({ go }: { go: (screen: Screen) => void }) {
+  const [pw, setPw] = useState('');
+  const strength = pw.length >= 8 ? (pw.length >= 12 ? 'Strong' : 'Medium') : 'Weak';
+  const strengthColor = strength === 'Strong' ? '#22a861' : strength === 'Medium' ? '#f5820d' : '#dc3545';
+  const strengthWidth = strength === 'Strong' ? '100%' : strength === 'Medium' ? '60%' : '30%';
+  return <Page><View style={styles.authContent}>
+    <IconButton name="arrow_back" onPress={() => go('otp')} />
+    <Text style={styles.authTitle}>Create New Password</Text>
+    <Text style={styles.authSubtitle}>Your new password must be different from your previous password.</Text>
+    <Field label="New Password" icon="lock" placeholder="••••••••" secure />
+    <View style={styles.strengthBar}><View style={[styles.strengthFill, { width: strengthWidth as any, backgroundColor: strengthColor }]} /></View>
+    <Text style={[styles.strengthText, { color: strengthColor }]}>Password strength: {strength}</Text>
+    <View style={styles.pwRequirements}>
+      <Text style={styles.pwReq}>• At least 8 characters</Text>
+      <Text style={styles.pwReq}>• One uppercase letter</Text>
+      <Text style={styles.pwReq}>• One number or special character</Text>
+    </View>
+    <Field label="Confirm Password" icon="lock" placeholder="••••••••" secure />
+    <Primary label="Reset Password" onPress={() => go('login')} style={styles.authButton} />
+  </View></Page>;
+}
+
+function AccountCreated({ go, role }: { go: (screen: Screen) => void; role: UserRole }) {
+  return <Page><View style={styles.successScreen}>
+    <View style={styles.successCircle}><Text style={styles.successCheck}>✓</Text></View>
+    <Text style={styles.successTitle}>Account Created!</Text>
+    <Text style={styles.successCopy}>Your {role === 'provider' ? 'provider' : 'customer'} account has been successfully created. Let's complete your profile to get started.</Text>
+    <View style={styles.successBadge}><AppIcon name={role === 'provider' ? 'storefront' : 'local_laundry_service'} size={18} color={BLUE} /><Text style={styles.successBadgeText}>{role === 'provider' ? 'Provider' : 'Customer'} Account</Text></View>
+    <Primary label="Complete Profile" onPress={() => go('completeProfile')} style={styles.successButton} />
+    <Pressable onPress={() => go('completeProfile')}><Text style={styles.skipText}>I'll do this later</Text></Pressable>
+  </View></Page>;
+}
+
+function CompleteProfile({ go, role }: { go: (screen: Screen) => void; role: UserRole }) {
+  return <Page><ScrollView contentContainerStyle={styles.authContent}>
+    <IconButton name="arrow_back" onPress={() => go('accountCreated')} />
+    <Text style={styles.authTitle}>Complete Your Profile</Text>
+    <Text style={styles.authSubtitle}>{role === 'provider' ? 'Set up your business profile to start receiving orders.' : 'Add a few more details to personalise your experience.'}</Text>
+    <Pressable style={styles.avatarUpload}><View style={styles.avatarCircle}><AppIcon name="add_a_photo" size={28} color={MUTED} /></View><Text style={styles.avatarText}>Add Photo</Text></Pressable>
+    {role === 'provider' ? <>
+      <Field label="Business Logo" icon="image" placeholder="Upload your logo" />
+      <Field label="Business Phone" icon="phone" placeholder="+263 77 000 0000" />
+      <Field label="Business Email" icon="mail" placeholder="hello@business.co.zw" />
+      <Field label="Business Address" icon="location_on" placeholder="27 Arundel Office Park, Mt Pleasant" />
+    </> : <>
+      <Field label="Gender" icon="person" placeholder="Select gender" />
+      <Field label="Date of Birth" icon="calendar_today" placeholder="DD / MM / YYYY" />
+      <Field label="Preferred Contact" icon="contact_phone" placeholder="Phone, Email, or WhatsApp" />
+    </>}
+    <Primary label="Continue" onPress={() => go('locationPermission')} style={styles.authButton} />
+  </ScrollView></Page>;
+}
+
+function LocationPermission({ go, finishAuth }: { go: (screen: Screen) => void; finishAuth: () => void }) {
+  return <Page><View style={styles.locationScreen}>
+    <View style={styles.locationArt}><View style={styles.locationPin}><AppIcon name="location_on" size={48} color={BLUE} /></View><View style={styles.locationRing} /><View style={styles.locationRingOuter} /></View>
+    <Text style={styles.locationTitle}>Enable Location</Text>
+    <Text style={styles.locationCopy}>We use your location to find nearby laundry providers, calculate delivery distances, and show accurate service areas.</Text>
+    <View style={styles.locationPerks}>
+      <View style={styles.locationPerk}><AppIcon name="near_me" size={20} color={BLUE} /><Text style={styles.locationPerkText}>Find providers closest to you</Text></View>
+      <View style={styles.locationPerk}><AppIcon name="local_shipping" size={20} color={BLUE} /><Text style={styles.locationPerkText}>Accurate delivery estimates</Text></View>
+      <View style={styles.locationPerk}><AppIcon name="map" size={20} color={BLUE} /><Text style={styles.locationPerkText}>Service area coverage</Text></View>
+    </View>
+    <Primary label="Enable Location" onPress={finishAuth} style={styles.locationButton} />
+    <Pressable onPress={finishAuth}><Text style={styles.skipText}>Skip for now</Text></Pressable>
+  </View></Page>;
+}
+
+function HomeHeader({ go }: { go: (screen: Screen) => void }) {
+  return (
+    <View style={styles.homeHeader}>
+      <View style={styles.homeHeaderTop}>
+        <View style={styles.homeHeaderLeft}>
+          <Text style={styles.homeGreeting}>Hi, Anesu</Text>
+          <Pressable style={styles.homeLocationRow}>
+            <AppIcon name="location_on" size={16} color={BLUE} />
+            <Text style={styles.homeLocationText}>Mt Pleasant, Harare</Text>
+            <AppIcon name="keyboard_arrow_down" size={18} color={MUTED} />
+          </Pressable>
+        </View>
+        <Pressable onPress={() => undefined} style={styles.homeNotificationButton}>
+          <AppIcon name="notifications_none" size={24} color={INK} />
+          <View style={styles.homeNotificationBadge} />
+        </Pressable>
+      </View>
+      <View style={styles.homeSearchBar}>
+        <AppIcon name="search" size={20} color={MUTED} />
+        <Text style={styles.homeSearchPlaceholder}>Search providers, services...</Text>
+      </View>
+    </View>
+  );
+}
+
+function Home({ go, orders, selectProvider }: { go: (screen: Screen) => void; orders: LaundrOrder[]; selectProvider: (p: Provider) => void }) {
   const featured = providers.slice(0, 3);
-  const nearby = providers.slice(0, 2);
-  return <Page bottom={<TabBar active="Home" go={go} />}><AppHeader onMenu={() => undefined} />
+  const nearby = providers.slice(3, 5);
+  return <Page bottom={<TabBar active="Home" go={go} />}>
     <ScrollView style={styles.flexScroll} contentContainerStyle={styles.homeContent}>
+      <HomeHeader go={go} />
       <SectionTitle title="Active orders" action="View all" />
       {orders.map((order) => <Pressable key={order.id} onPress={() => go('orders')} style={styles.activeOrderCard}><View style={styles.activeOrderTop}><View><Text style={styles.activeOrderService}>{order.service}</Text><Text style={styles.activeOrderProvider}>{order.provider} · {order.load} {order.service === 'Dry Cleaning' ? 'items' : 'kg'}</Text></View><Pill label={order.status} /></View><View style={styles.activeOrderBottom}><Text style={styles.activeOrderSlot}><Text style={styles.activeOrderSlotIcon}>⊙ </Text>{order.slot}</Text><Text style={styles.activeOrderTotal}>{money(order.total)}</Text></View></Pressable>)}
       <View style={styles.promoCard}><Text style={styles.promoLabel}>Student Friday</Text><Text style={styles.promoTitle}>Free campus pickup at UZ &amp; HIT</Text><Text style={styles.promoCopy}>Book an 8 kg student bundle before Thursday 18:00.</Text><Pressable style={styles.promoButton}><Text style={styles.promoButtonText}>Claim offer</Text></Pressable></View>
-      <SectionTitle title="Featured provider" />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.featuredScroll}>{featured.map((provider) => <Pressable key={provider.id} onPress={() => go('provider')} style={styles.featuredCard}><Image source={{ uri: provider.image }} style={styles.featuredImage} /><View style={styles.featuredInfo}><View style={styles.featuredNameRow}><Text style={styles.featuredName}>{provider.name}</Text><Text style={styles.featuredRating}>★ {provider.rating} <Text style={styles.featuredReviews}>(212)</Text></Text></View><Text style={styles.featuredMeta}>{provider.neighbourhood} · {provider.distance} km away · from US$3.00/kg</Text></View></Pressable>)}</ScrollView>
+      <SectionTitle title="Featured providers" action="See all" onAction={() => go('allProviders')} />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.featuredScroll}>{featured.map((provider) => <Pressable key={provider.id} onPress={() => selectProvider(provider)} style={styles.featuredCard}><Image source={{ uri: provider.image }} style={styles.featuredImage} /><View style={styles.featuredInfo}><View style={styles.featuredNameRow}><Text style={styles.featuredName}>{provider.name}</Text><Text style={styles.featuredRating}>★ {provider.rating} <Text style={styles.featuredReviews}>({Math.floor(provider.rating * 44)})</Text></Text></View><Text style={styles.featuredMeta}>{provider.neighbourhood} · {provider.distance} km away · from US$3.00/kg</Text></View></Pressable>)}</ScrollView>
       <SectionTitle title="Nearby me" />
-      {nearby.map((provider) => <Pressable key={provider.id} onPress={() => go('provider')} style={styles.nearbyCard}><Image source={{ uri: provider.image }} style={styles.featuredImage} /><View style={styles.featuredInfo}><View style={styles.featuredNameRow}><Text style={styles.featuredName}>{provider.name}</Text><Text style={styles.featuredRating}>★ {provider.rating} <Text style={styles.featuredReviews}>(212)</Text></Text></View><Text style={styles.featuredMeta}>{provider.neighbourhood} · {provider.distance} km away · from US$3.00/kg</Text></View></Pressable>)}
-      <Pressable onPress={() => go('filter')} style={styles.viewMoreButton}><Text style={styles.viewMoreText}>View more providers</Text><AppIcon name="arrow_forward" size={18} color={BLUE} /></Pressable>
+      {nearby.map((provider) => <Pressable key={provider.id} onPress={() => selectProvider(provider)} style={styles.nearbyCard}><Image source={{ uri: provider.image }} style={styles.featuredImage} /><View style={styles.featuredInfo}><View style={styles.featuredNameRow}><Text style={styles.featuredName}>{provider.name}</Text><Text style={styles.featuredRating}>★ {provider.rating} <Text style={styles.featuredReviews}>({Math.floor(provider.rating * 44)})</Text></Text></View><Text style={styles.featuredMeta}>{provider.neighbourhood} · {provider.distance} km away · from US$3.00/kg</Text></View></Pressable>)}
+      <Pressable onPress={() => go('allProviders')} style={styles.viewMoreButton}><Text style={styles.viewMoreText}>View all providers</Text><AppIcon name="arrow_forward" size={18} color={BLUE} /></Pressable>
     </ScrollView></Page>;
+}
+
+function AllProviders({ go, selectProvider }: { go: (screen: Screen) => void; selectProvider: (p: Provider) => void }) {
+  const [search, setSearch] = useState('');
+  const filtered = providers.filter((p) => {
+    const query = search.toLowerCase();
+    return p.name.toLowerCase().includes(query) || p.neighbourhood.toLowerCase().includes(query) || p.services.some((s) => s.toLowerCase().includes(query));
+  });
+  return <Page bottom={<TabBar active="Search" go={go} />}>
+    <View style={styles.allProvidersHeader}>
+      <View style={styles.allProvidersTopRow}>
+        <IconButton name="arrow_back" onPress={() => go('home')} style={styles.bookingBack} />
+        <Text style={styles.allProvidersTitle}>All Providers</Text>
+        <View style={{ width: 44 }} />
+      </View>
+      <View style={styles.allProvidersSearchBar}>
+        <AppIcon name="search" size={20} color={MUTED} />
+        <TextInput style={styles.allProvidersSearchInput} value={search} onChangeText={setSearch} placeholder="Search by name, service, location..." placeholderTextColor={MUTED} />
+        {search.length > 0 && <Pressable onPress={() => setSearch('')}><AppIcon name="close" size={18} color={MUTED} /></Pressable>}
+      </View>
+    </View>
+    <ScrollView style={styles.flexScroll} contentContainerStyle={styles.allProvidersBody}>
+      <Text style={styles.allProvidersCount}>{filtered.length} provider{filtered.length !== 1 ? 's' : ''} found</Text>
+      {filtered.map((provider) => (
+        <Pressable key={provider.id} onPress={() => selectProvider(provider)} style={styles.allProviderCard}>
+          <Image source={{ uri: provider.image }} style={styles.allProviderImage} />
+          <View style={styles.allProviderInfo}>
+            <View style={styles.allProviderNameRow}>
+              <Text style={styles.allProviderName} numberOfLines={1}>{provider.name}</Text>
+              <Text style={styles.allProviderRating}>★ {provider.rating}</Text>
+            </View>
+            <Text style={styles.allProviderLocation}>{provider.neighbourhood} · {provider.distance} km away</Text>
+            <View style={styles.allProviderServices}>
+              {provider.services.slice(0, 2).map((s) => <View key={s} style={styles.allProviderServiceChip}><Text style={styles.allProviderServiceText}>{s}</Text></View>)}
+            </View>
+            <View style={styles.allProviderFooter}>
+              <Text style={styles.allProviderTurnaround}>⌖ {provider.turnaround}</Text>
+              <Text style={styles.allProviderPrice}>from US$3/kg</Text>
+            </View>
+          </View>
+        </Pressable>
+      ))}
+      {filtered.length === 0 && <View style={styles.allProvidersEmpty}><AppIcon name="search_off" size={48} color={MUTED} /><Text style={styles.allProvidersEmptyText}>No providers match your search</Text></View>}
+    </ScrollView>
+  </Page>;
 }
 
 function Filter({ go, filters, setFilters }: { go: (screen: Screen) => void; filters: string[]; setFilters: (filters: string[]) => void }) {
@@ -182,11 +412,12 @@ function Filter({ go, filters, setFilters }: { go: (screen: Screen) => void; fil
 }
 
 function ProviderDetails({ go, provider }: { go: (screen: Screen) => void; provider: Provider }) {
+  const reviewCount = Math.floor(provider.rating * 44);
   return <Page bottom={<BottomButton label="Book Now" onPress={() => go('service')} />}><AppHeader onMenu={() => go('home')} /><ScrollView contentContainerStyle={styles.providerBody}>
-    <Image source={{ uri: provider.image }} style={styles.heroImage} /><View style={styles.providerIntro}><Pill label="✿ VERIFIED" /><Text style={styles.providerName}>{provider.name}</Text><View style={styles.providerMeta}><Text style={styles.star}>★</Text><Text style={styles.metaStrong}>4.9</Text><Text>(120 reviews)</Text><AppIcon name="location_on" size={23} color={BLUE} /><Text>1.2 km away</Text></View><Text style={styles.metaStrong}>Turnaround</Text><Text style={styles.turnaround}>{provider.turnaround}</Text></View>
+    <Image source={{ uri: provider.image }} style={styles.heroImage} /><View style={styles.providerIntro}><Pill label="✿ VERIFIED" /><Text style={styles.providerName}>{provider.name}</Text><View style={styles.providerMeta}><Text style={styles.star}>★</Text><Text style={styles.metaStrong}>{provider.rating}</Text><Text>({reviewCount} reviews)</Text><AppIcon name="location_on" size={23} color={BLUE} /><Text>{provider.distance} km away</Text></View><Text style={styles.metaStrong}>Turnaround</Text><Text style={styles.turnaround}>{provider.turnaround}</Text></View>
     <SectionHeading title="Services" />
-    {serviceCatalog.slice(0, 3).map((service, index) => <ServiceInfo key={service.key} service={service.name === 'Wash & Fold' ? 'Standard Wash & Fold' : service.name} detail={index === 0 ? 'Includes sorting, washing, and professional folding' : index === 1 ? 'Crisp steam ironing for all garment types' : 'Eco-friendly solvents for delicate fabrics'} price={service.price} unit={service.unit.replace('per ', '')} icon={index === 1 ? 'iron' : index === 2 ? 'dry_cleaning' : 'local_laundry_service'} />)}
-    <SectionHeading title="About" /><View style={styles.aboutCard}><Text style={styles.aboutText}>At SwiftWash & Dry, we treat your garments like our own. With over 10 years of experience in textile care, we use state-of-the-art European machinery and eco-conscious detergents to ensure your clothes return brighter, softer, and perfectly pressed. Our facility in Mount Pleasant is climate-controlled and dust-free to maintain the highest hygiene standards.</Text></View>
+    {serviceCatalog.filter((s) => provider.services.some((ps) => ps.toLowerCase().includes(s.name.toLowerCase().split(' ')[0]))).slice(0, 3).map((service, index) => <ServiceInfo key={service.key} service={service.name} detail={service.key === 'wash' ? 'Includes sorting, washing, and professional folding' : service.key === 'iron' ? 'Crisp steam ironing for all garment types' : service.key === 'dry' ? 'Eco-friendly solvents for delicate fabrics' : service.key === 'duvet' ? 'Deep wash and fluff for large items' : 'Affordable student laundry packs'} price={service.price} unit={service.unit.replace('per ', '')} icon={service.key === 'iron' ? 'iron' : service.key === 'dry' ? 'dry_cleaning' : 'local_laundry_service'} />)}
+    <SectionHeading title="About" /><View style={styles.aboutCard}><Text style={styles.aboutText}>At {provider.name}, we treat your garments like our own. With years of experience in textile care, we use state-of-the-art machinery and eco-conscious detergents to ensure your clothes return brighter, softer, and perfectly pressed. Our facility in {provider.neighbourhood} is climate-controlled and dust-free to maintain the highest hygiene standards.</Text></View>
     <View style={styles.areaCard}><Text style={styles.areaTitle}>⌑  Service Area</Text><Text style={styles.addressPill}>{provider.address}</Text><View style={styles.mapArea}><Text style={styles.mapHome}>⌂</Text></View></View>
     <View style={styles.hoursCard}><Text style={styles.hoursTitle}>◷  Operating Hours</Text><Text style={styles.hoursText}>Mon - Sat: 08:00 AM - 07:00 PM{`\n`}Sun: 10:00 AM - 04:00 PM</Text></View>
   </ScrollView></Page>;
@@ -281,17 +512,19 @@ function BookingHeader({ title, subtitle, onBack, step, right }: { title: string
 function AppIcon({ name, size, color }: { name: string; size: number; color: string }) { return <SymbolView name={{ ios: name as never, android: name as never, web: name as never }} size={size} tintColor={color} />; }
 function IconButton({ name, onPress, style }: { name: string; onPress: () => void; style?: object }) { return <Pressable onPress={onPress} hitSlop={12} style={[styles.iconButton, style]}><AppIcon name={name} size={27} color={BLUE} /></Pressable>; }
 function Primary({ label, onPress, style }: { label: string; onPress: () => void; style?: object }) { return <Pressable onPress={onPress} style={({ pressed }) => [styles.primary, style, pressed && styles.pressed]}><Text style={styles.primaryText}>{label}</Text></Pressable>; }
-function Secondary({ label }: { label: string }) { return <Pressable style={styles.secondary}><Text style={styles.secondaryText}>{label}</Text></Pressable>; }
+function Secondary({ label }: { label: string }) { return <Pressable style={styles.secondary}>{label === 'Google' ? <GoogleIcon /> : <FacebookIcon />}<Text style={styles.secondaryText}>{label}</Text></Pressable>; }
+function GoogleIcon() { return <View style={styles.socialIcon}><Text style={{ fontSize: 18, fontWeight: '700', color: '#4285F4' }}>G</Text></View>; }
+function FacebookIcon() { return <View style={[styles.socialIcon, { backgroundColor: '#1877F2' }]}><Text style={{ fontSize: 14, fontWeight: '800', color: '#fff' }}>f</Text></View>; }
 function BottomButton({ label, onPress }: { label: string; onPress: () => void }) { return <View style={styles.bottomButton}><Primary label={label} onPress={onPress} /></View>; }
 function BookingBottom({ label, detail, onPress, left, onLeft }: { label: string; detail?: string; onPress: () => void; left?: string; onLeft?: () => void }) { return <View style={styles.bookingBottom}>{detail && <Text style={styles.subtotal}>{detail}</Text>}<View style={styles.bookingBottomRow}>{left && <Pressable onPress={onLeft}><Text style={styles.backLabel}>{left}</Text></Pressable>}<Primary label={label} onPress={onPress} style={styles.bookingContinue} /></View></View>; }
 function Field({ label, icon, placeholder, secure }: { label: string; icon: string; placeholder: string; secure?: boolean }) { return <View style={styles.fieldGroup}><Text style={styles.fieldLabel}>{label}</Text><View style={styles.field}><AppIcon name={icon} size={20} color="#758095" /><TextInput placeholder={placeholder} secureTextEntry={secure} placeholderTextColor="#788397" style={styles.fieldInput} /></View></View>; }
 function Divider({ label }: { label: string }) { return <View style={styles.divider}><View style={styles.dividerLine} /><Text>{label}</Text><View style={styles.dividerLine} /></View>; }
 function Dots({ count, active }: { count: number; active: number }) { return <View style={styles.dots}>{Array.from({ length: count }).map((_, index) => <View key={index} style={[styles.dot, active === index && styles.dotActive]} />)}</View>; }
 function Chip({ label, active }: { label: string; active?: boolean }) { return <View style={[styles.chip, active && styles.chipActive]}><Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text></View>; }
-function SectionTitle({ title, action }: { title: string; action?: string }) { return <View style={styles.sectionTitle}><Text style={styles.sectionTitleText}>{title}</Text>{action && <Text style={styles.sectionAction}>{action}</Text>}</View>; }
+function SectionTitle({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) { return <View style={styles.sectionTitle}><Text style={styles.sectionTitleText}>{title}</Text>{action && <Pressable onPress={onAction}><Text style={styles.sectionAction}>{action}</Text></Pressable>}</View>; }
 function SectionHeading({ title }: { title: string }) { return <Text style={styles.sectionHeading}><Text style={styles.headingAccent}>┃</Text> {title}</Text>; }
 function Pill({ label }: { label: string }) { return <View style={styles.pill}><Text style={styles.pillText}>{label}</Text></View>; }
-function ProviderCard({ provider, onPress }: { provider: Provider; onPress: () => void }) { return <Pressable onPress={onPress} style={styles.providerCard}><Image source={{ uri: provider.image }} style={styles.providerThumb} /><View style={styles.providerCardInfo}><View style={styles.providerTitleRow}><Text style={styles.providerCardName}>{provider.name}</Text><Text style={styles.cardRating}>★ {provider.rating}</Text></View>{provider.services.map((service) => <Text key={service} style={styles.providerService}>• {service}</Text>)}<View style={styles.providerFooter}><Text style={styles.distance}>⌖ {provider.distance} km away</Text><Text style={styles.free}>Free Delivery</Text><Text style={styles.priceTag}>From $12/load</Text></View></View></Pressable>; }
+function ProviderCard({ provider, onPress }: { provider: Provider; onPress: () => void }) { return <Pressable onPress={onPress} style={styles.allProviderCard}><Image source={{ uri: provider.image }} style={styles.allProviderImage} /><View style={styles.allProviderInfo}><View style={styles.allProviderNameRow}><Text style={styles.allProviderName}>{provider.name}</Text><Text style={styles.allProviderRating}>★ {provider.rating}</Text></View><Text style={styles.allProviderLocation}>{provider.neighbourhood} · {provider.distance} km away</Text><View style={styles.allProviderServices}>{provider.services.slice(0, 2).map((service) => <View key={service} style={styles.allProviderServiceChip}><Text style={styles.allProviderServiceText}>{service}</Text></View>)}</View></View></Pressable>; }
 function Rating({ label, detail, selected }: { label: string; detail?: string; selected?: boolean }) { return <View style={[styles.ratingBox, selected && styles.ratingBoxSelected]}><Text style={[styles.ratingValue, selected && styles.ratingValueSelected]}>{label}</Text>{detail && <Text style={[styles.ratingDetail, selected && styles.ratingDetailSelected]}>{detail}</Text>}</View>; }
 function Choice({ selected, icon, title, subtitle, text, onPress }: { selected: boolean; icon: string; title: string; subtitle: string; text: string; onPress: () => void }) { return <Pressable onPress={onPress} style={[styles.accountChoice, selected && styles.selectedChoice]}><View style={[styles.choiceIcon, selected && styles.choiceIconSelected]}><AppIcon name={icon} size={31} color={selected ? '#ffffff' : INK} /></View><View style={styles.choiceCopy}><Text style={styles.choiceTitle}>{title}</Text><Text style={styles.choiceSubtitle}>{subtitle}</Text><Text style={styles.choiceText}>{text}</Text></View>{selected && <Text style={styles.choiceCheck}>✓</Text>}</Pressable>; }
 function ServiceInfo({ service, detail, price, unit, icon }: { service: string; detail: string; price: number; unit: string; icon: string }) { return <View style={styles.serviceInfo}><View style={styles.serviceIcon}><AppIcon name={icon} size={25} color={BLUE} /></View><View style={styles.serviceInfoCopy}><Text style={styles.serviceInfoTitle}>{service}</Text><Text style={styles.serviceInfoDetail}>{detail}</Text></View><Text style={styles.serviceInfoPrice}>{money(price)}<Text style={styles.serviceInfoUnit}>/{unit}</Text></Text></View>; }
@@ -311,13 +544,26 @@ function money(value: number) { return `US$${value.toFixed(2)}`; }
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: PAGE }, flexScroll: { flex: 1 }, splash: { flex: 1, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }, logoLockup: { flexDirection: 'row', alignItems: 'center', gap: 9 }, logoText: { color: BLUE, fontSize: 51, lineHeight: 58, fontWeight: '900', letterSpacing: -3.7, fontFamily: FONT },
   washer: { borderWidth: 4.5, borderRadius: 6, position: 'relative' }, washerDots: { position: 'absolute', width: 5, height: 5, borderRadius: 3, left: 7, top: 7 }, washerDotsSecond: { left: 17 }, washerDrum: { position: 'absolute', width: '64%', aspectRatio: 1, borderWidth: 3.5, borderRadius: 40, bottom: 6, left: '17%', overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }, washerFill: { height: '83%', width: '56%', transform: [{ rotate: '45deg' }, { translateX: -8 }] },
-  topBare: { height: 64, justifyContent: 'center', paddingHorizontal: 22, marginTop: 20, marginBottom: 1 }, iconButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' }, onboardPage: { paddingHorizontal: 23 }, discoverArt: { height: 350, backgroundColor: '#fff', borderRadius: 39, position: 'relative', justifyContent: 'center', alignItems: 'center' }, artWasher: { height: 96, width: 96, borderRadius: 31, backgroundColor: '#d7e3ff', alignItems: 'center', justifyContent: 'center', marginTop: -18, shadowColor: '#8294b9', shadowOffset: { width: 0, height: 9 }, shadowOpacity: .25, shadowRadius: 10, elevation: 4 }, pinArt: { height: 49, width: 49, backgroundColor: '#5aceef', borderRadius: 12, position: 'absolute', top: 92, left: '57%', alignItems: 'center', justifyContent: 'center', shadowColor: '#5395a9', shadowOffset: { width: 0, height: 7 }, shadowOpacity: .24, shadowRadius: 8, elevation: 4 }, artPager: { position: 'absolute', bottom: 108, flexDirection: 'row', gap: 8 }, artActive: { height: 6, width: 48, borderRadius: 6, backgroundColor: '#00778c' }, artIdle: { height: 6, width: 16, borderRadius: 6, backgroundColor: '#e7eaf0' }, flowArt: { height: 352, borderRadius: 39, backgroundColor: '#e7eef5', flexDirection: 'row', gap: 24, alignItems: 'center', justifyContent: 'center' }, flowOption: { height: 146, width: 126, backgroundColor: '#fff', borderRadius: 25, alignItems: 'center', justifyContent: 'center', gap: 12 }, flowIcon: { height: 64, width: 64, borderRadius: 16, backgroundColor: '#d7e3ff', alignItems: 'center', justifyContent: 'center' }, flowLabel: { fontSize: 16, fontWeight: '800', fontFamily: FONT }, trackArt: { height: 356, position: 'relative' }, artOrder: { position: 'absolute', top: 0, left: 0, height: 169, width: 230, padding: 23, borderRadius: 25, backgroundColor: '#fff', shadowColor: '#9da7bb', shadowOpacity: .1, shadowOffset: { width: 0, height: 7 }, shadowRadius: 9, elevation: 2 }, artOrderTitle: { fontFamily: FONT, fontSize: 20, fontWeight: '800', lineHeight: 26, marginTop: 14 }, artPilot: { position: 'absolute', right: 0, top: 0, height: 109, width: 107, borderRadius: 25, backgroundColor: '#2377dd', alignItems: 'center', paddingTop: 11 }, artAvatar: { height: 45, width: 45, borderRadius: 24, backgroundColor: '#f5e5d0', fontSize: 27, textAlign: 'center', paddingTop: 6 }, artPilotText: { color: '#fff', fontFamily: FONT, fontWeight: '500', fontSize: 12, lineHeight: 15, textAlign: 'center', marginTop: 8 }, artMap: { position: 'absolute', left: 0, bottom: 0, height: 167, width: 170, borderRadius: 25, backgroundColor: '#deebd6', alignItems: 'center', justifyContent: 'center' }, artActivity: { position: 'absolute', right: 0, bottom: 0, height: 169, width: 169, borderRadius: 25, backgroundColor: '#fff', padding: 17 }, artActivityText: { fontSize: 12, fontFamily: FONT, fontWeight: '500', lineHeight: 18, marginTop: 12 }, progressLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 23 }, dots: { flexDirection: 'row', gap: 5 }, dot: { height: 7, width: 16, borderRadius: 4, backgroundColor: '#cfe0ff' }, dotActive: { width: 48, backgroundColor: BLUE }, stepText: { fontSize: 12, color: '#9098a5', fontFamily: FONT }, onboardTitle: { color: INK, fontFamily: FONT, fontSize: 28, fontWeight: '900', letterSpacing: -1.1, lineHeight: 34, marginTop: 29 }, blue: { color: BLUE }, blueBold: { color: BLUE, fontWeight: '800' }, onboardCopy: { color: '#5b6575', fontFamily: FONT, fontSize: 16, lineHeight: 24, marginTop: 18 }, primary: { minHeight: 61, borderRadius: 18, backgroundColor: BLUE, alignItems: 'center', justifyContent: 'center', shadowColor: '#07498e', shadowOffset: { width: 0, height: 8 }, shadowOpacity: .22, shadowRadius: 8, elevation: 5 }, primaryText: { color: '#fff', fontFamily: FONT, fontSize: 16, fontWeight: '900', letterSpacing: .2 }, onboardButton: { marginHorizontal: 15, marginTop: 23, height: 69, borderRadius: 22 }, pressed: { opacity: .8, transform: [{ scale: .99 }] },
-  authContent: { paddingHorizontal: 23, paddingTop: 40, flex: 1 }, authTitle: { fontFamily: FONT, fontSize: 24, lineHeight: 30, fontWeight: '900', color: INK, letterSpacing: -.8, marginTop: 29 }, authSubtitle: { fontFamily: FONT, fontSize: 16, color: '#535e70', lineHeight: 24, marginTop: 4, marginBottom: 17 }, fieldGroup: { marginBottom: 20 }, fieldLabel: { fontFamily: FONT, color: INK, fontSize: 14, fontWeight: '500', marginBottom: 8 }, field: { height: 53, borderRadius: 13, backgroundColor: '#f1f3f7', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 12 }, fieldInput: { flex: 1, fontFamily: FONT, color: INK, fontSize: 16, height: '100%' }, forgot: { color: BLUE, fontSize: 12, fontFamily: FONT, textAlign: 'right', marginTop: -13, marginBottom: 25 }, authButton: { marginTop: 1, height: 61, borderRadius: 13 }, divider: { flexDirection: 'row', alignItems: 'center', gap: 16, marginVertical: 30, color: '#788194', justifyContent: 'center' }, dividerLine: { flex: 1, height: 1, backgroundColor: '#e5e8ee' }, socialRow: { flexDirection: 'row', justifyContent: 'center', gap: 49, marginBottom: 34 }, secondary: { width: 129, height: 59, borderRadius: 12, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }, secondaryText: { color: '#424b5b', fontFamily: FONT, fontWeight: '900', fontSize: 16, letterSpacing: .2 }, authSwitch: { textAlign: 'center', color: '#515b6a', fontFamily: FONT, fontSize: 14 }, legal: { marginTop: 'auto', paddingBottom: 13, alignItems: 'center', gap: 10 }, terms: { color: '#8a93a1', fontFamily: FONT, fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 61 },
+  topBare: { height: 64, justifyContent: 'center', alignItems: 'flex-start', paddingLeft: 15, marginTop: 20, marginBottom: 1 }, onboardNav: { height: 64, justifyContent: 'center', alignItems: 'flex-start', paddingLeft: 16, marginTop: 20 }, iconButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' }, onboardPage: { paddingHorizontal: 23 }, discoverArt: { height: 350, backgroundColor: '#fff', borderRadius: 39, position: 'relative', justifyContent: 'center', alignItems: 'center' }, artWasher: { height: 96, width: 96, borderRadius: 31, backgroundColor: '#d7e3ff', alignItems: 'center', justifyContent: 'center', marginTop: -18, shadowColor: '#8294b9', shadowOffset: { width: 0, height: 9 }, shadowOpacity: .25, shadowRadius: 10, elevation: 4 }, pinArt: { height: 49, width: 49, backgroundColor: '#5aceef', borderRadius: 12, position: 'absolute', top: 92, left: '57%', alignItems: 'center', justifyContent: 'center', shadowColor: '#5395a9', shadowOffset: { width: 0, height: 7 }, shadowOpacity: .24, shadowRadius: 8, elevation: 4 }, artPager: { position: 'absolute', bottom: 108, flexDirection: 'row', gap: 8 }, artActive: { height: 6, width: 48, borderRadius: 6, backgroundColor: '#00778c' }, artIdle: { height: 6, width: 16, borderRadius: 6, backgroundColor: '#e7eaf0' }, flowArt: { height: 352, borderRadius: 39, backgroundColor: '#e7eef5', flexDirection: 'row', gap: 24, alignItems: 'center', justifyContent: 'center' }, flowOption: { height: 146, width: 126, backgroundColor: '#fff', borderRadius: 25, alignItems: 'center', justifyContent: 'center', gap: 12 }, flowIcon: { height: 64, width: 64, borderRadius: 16, backgroundColor: '#d7e3ff', alignItems: 'center', justifyContent: 'center' }, flowLabel: { fontSize: 16, fontWeight: '800', fontFamily: FONT }, trackArt: { height: 356, position: 'relative' }, artOrder: { position: 'absolute', top: 0, left: 0, height: 169, width: 230, padding: 23, borderRadius: 25, backgroundColor: '#fff', shadowColor: '#9da7bb', shadowOpacity: .1, shadowOffset: { width: 0, height: 7 }, shadowRadius: 9, elevation: 2 }, artOrderTitle: { fontFamily: FONT, fontSize: 20, fontWeight: '800', lineHeight: 26, marginTop: 14 }, artPilot: { position: 'absolute', right: 0, top: 0, height: 109, width: 107, borderRadius: 25, backgroundColor: '#2377dd', alignItems: 'center', paddingTop: 11 }, artAvatar: { height: 45, width: 45, borderRadius: 24, backgroundColor: '#f5e5d0', fontSize: 27, textAlign: 'center', paddingTop: 6 }, artPilotText: { color: '#fff', fontFamily: FONT, fontWeight: '500', fontSize: 12, lineHeight: 15, textAlign: 'center', marginTop: 8 }, artMap: { position: 'absolute', left: 0, bottom: 0, height: 167, width: 170, borderRadius: 25, backgroundColor: '#deebd6', alignItems: 'center', justifyContent: 'center' }, artActivity: { position: 'absolute', right: 0, bottom: 0, height: 169, width: 169, borderRadius: 25, backgroundColor: '#fff', padding: 17 }, artActivityText: { fontSize: 12, fontFamily: FONT, fontWeight: '500', lineHeight: 18, marginTop: 12 }, progressLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 23 }, dots: { flexDirection: 'row', gap: 5 }, dot: { height: 7, width: 16, borderRadius: 4, backgroundColor: '#cfe0ff' }, dotActive: { width: 48, backgroundColor: BLUE }, stepText: { fontSize: 12, color: '#9098a5', fontFamily: FONT }, onboardTitle: { color: INK, fontFamily: FONT, fontSize: 28, fontWeight: '900', letterSpacing: -1.1, lineHeight: 34, marginTop: 29 }, blue: { color: BLUE }, blueBold: { color: BLUE, fontWeight: '800' }, onboardCopy: { color: '#5b6575', fontFamily: FONT, fontSize: 16, lineHeight: 24, marginTop: 18 }, primary: { minHeight: 61, borderRadius: 18, backgroundColor: BLUE, alignItems: 'center', justifyContent: 'center', shadowColor: '#07498e', shadowOffset: { width: 0, height: 8 }, shadowOpacity: .22, shadowRadius: 8, elevation: 5 }, primaryText: { color: '#fff', fontFamily: FONT, fontSize: 16, fontWeight: '900', letterSpacing: .2 }, onboardButton: { marginHorizontal: 15, marginTop: 23, height: 69, borderRadius: 22 }, pressed: { opacity: .8, transform: [{ scale: .99 }] },
+  authContent: { paddingHorizontal: 23, paddingTop: 40, paddingBottom: 40 }, authTitle: { fontFamily: FONT, fontSize: 26, lineHeight: 32, fontWeight: '900', color: INK, letterSpacing: -.9, marginTop: 24 }, authSubtitle: { fontFamily: FONT, fontSize: 15, color: '#535e70', lineHeight: 23, marginTop: 6, marginBottom: 22 }, fieldGroup: { marginBottom: 18 }, fieldLabel: { fontFamily: FONT, color: INK, fontSize: 14, fontWeight: '600', marginBottom: 8 }, field: { height: 53, borderRadius: 14, backgroundColor: '#f1f3f7', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 12 }, fieldInput: { flex: 1, fontFamily: FONT, color: INK, fontSize: 16, height: '100%' }, forgot: { color: BLUE, fontSize: 13, fontFamily: FONT, fontWeight: '600' }, authButton: { marginTop: 8, height: 61, borderRadius: 16 }, divider: { flexDirection: 'row', alignItems: 'center', gap: 16, marginVertical: 26, justifyContent: 'center' }, dividerLine: { flex: 1, height: 1, backgroundColor: '#e5e8ee' }, socialRow: { flexDirection: 'row', justifyContent: 'center', gap: 16, marginBottom: 28 }, secondary: { flex: 1, height: 56, borderRadius: 14, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#e0e4e9', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }, secondaryText: { color: '#424b5b', fontFamily: FONT, fontWeight: '800', fontSize: 15 }, socialIcon: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#f1f3f7', alignItems: 'center', justifyContent: 'center' }, authSwitch: { textAlign: 'center', color: '#515b6a', fontFamily: FONT, fontSize: 14, marginTop: 20 }, legal: { marginTop: 30, paddingBottom: 13, alignItems: 'center', gap: 8 }, legalText: { color: '#8a93a1', fontFamily: FONT, fontSize: 12 }, terms: { color: '#8a93a1', fontFamily: FONT, fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 20 },
+  roleBody: { paddingHorizontal: 23, paddingBottom: 30 }, roleTitle: { fontFamily: FONT, fontSize: 30, fontWeight: '900', color: INK, letterSpacing: -1.2, lineHeight: 38, marginTop: 10 }, roleSubtitle: { fontFamily: FONT, fontSize: 15, color: '#5b6575', lineHeight: 22, marginTop: 10, marginBottom: 28 }, roleCard: { minHeight: 140, borderWidth: 1.8, borderColor: '#e0e5ed', borderRadius: 24, backgroundColor: '#fff', padding: 20, flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16, gap: 14, position: 'relative' }, roleCardActive: { borderColor: BLUE, backgroundColor: '#edf4ff', shadowColor: BLUE, shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 4 }, roleIcon: { height: 50, width: 50, flexShrink: 0, borderRadius: 15, backgroundColor: '#e8f2ff', alignItems: 'center', justifyContent: 'center', marginTop: 2 }, roleIconActive: { backgroundColor: BLUE }, roleCopy: { flex: 1, gap: 4 }, roleCardTitle: { fontFamily: FONT, fontSize: 16, fontWeight: '800', color: INK, lineHeight: 21 }, roleCardType: { fontFamily: FONT, fontSize: 13, color: BLUE, fontWeight: '700' }, roleCardText: { fontFamily: FONT, fontSize: 13, color: '#6b7685', lineHeight: 19, marginTop: 4 }, roleCheck: { position: 'absolute', right: 16, top: 16, width: 28, height: 28, borderRadius: 14, backgroundColor: BLUE, alignItems: 'center', justifyContent: 'center' }, roleCheckText: { color: '#fff', fontSize: 16, fontWeight: '700' }, roleBottom: { padding: 16, backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, shadowColor: '#aebcd1', shadowOpacity: 0.15, shadowRadius: 10, elevation: 6 }, btnDisabled: { opacity: 0.4 },
+  roleBadge: { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', backgroundColor: '#e8f2ff', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, marginTop: 16 }, roleBadgeText: { fontFamily: FONT, fontSize: 13, color: BLUE, fontWeight: '700' }, nameRow: { flexDirection: 'row', gap: 12 }, nameHalf: { flex: 1 },
+  loginOptions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: -8, marginBottom: 20 }, rememberRow: { flexDirection: 'row', alignItems: 'center', gap: 8 }, checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1.8, borderColor: '#d0d5dd', alignItems: 'center', justifyContent: 'center' }, checkboxActive: { backgroundColor: BLUE, borderColor: BLUE }, checkMark: { color: '#fff', fontSize: 13, fontWeight: '700' }, rememberText: { fontFamily: FONT, fontSize: 13, color: MUTED },
+  forgotIcon: { width: 72, height: 72, borderRadius: 20, backgroundColor: '#e8f2ff', alignItems: 'center', justifyContent: 'center', marginTop: 20 },
+  otpRow: { flexDirection: 'row', justifyContent: 'center', gap: 10, marginTop: 28, marginBottom: 16 }, otpBox: { width: 50, height: 58, borderRadius: 14, backgroundColor: '#f1f3f7', textAlign: 'center', fontFamily: FONT, fontSize: 22, fontWeight: '800', color: INK }, otpBoxFilled: { borderWidth: 2, borderColor: BLUE, backgroundColor: '#edf4ff' }, otpTimer: { fontFamily: FONT, fontSize: 13, color: MUTED, textAlign: 'center', marginBottom: 6 }, resendLink: { fontFamily: FONT, fontSize: 14, color: BLUE, fontWeight: '700', textAlign: 'center', marginBottom: 10 },
+  strengthBar: { height: 6, borderRadius: 3, backgroundColor: '#e8ecf1', marginTop: -8, marginBottom: 8 }, strengthFill: { height: '100%', borderRadius: 3 }, strengthText: { fontFamily: FONT, fontSize: 12, fontWeight: '600', marginBottom: 12 }, pwRequirements: { marginBottom: 20, gap: 4 }, pwReq: { fontFamily: FONT, fontSize: 13, color: MUTED, lineHeight: 20 },
+  successScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 30 }, successCircle: { width: 100, height: 100, borderRadius: 50, backgroundColor: '#e8f9ef', alignItems: 'center', justifyContent: 'center' }, successCheck: { color: '#22a861', fontSize: 44, fontWeight: '700' }, successTitle: { fontFamily: FONT, fontSize: 26, fontWeight: '900', color: INK, letterSpacing: -.8, marginTop: 28 }, successCopy: { fontFamily: FONT, fontSize: 15, color: '#5b6575', lineHeight: 23, textAlign: 'center', marginTop: 12 }, successBadge: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#e8f2ff', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 9, marginTop: 24 }, successBadgeText: { fontFamily: FONT, fontSize: 14, color: BLUE, fontWeight: '700' }, successButton: { alignSelf: 'stretch', marginTop: 36, height: 61, borderRadius: 18 }, skipText: { fontFamily: FONT, fontSize: 14, color: MUTED, fontWeight: '500', marginTop: 18 },
+  avatarUpload: { alignItems: 'center', marginBottom: 24, marginTop: 8 }, avatarCircle: { width: 88, height: 88, borderRadius: 44, backgroundColor: '#f1f3f7', borderWidth: 2, borderColor: '#e0e4e9', borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center' }, avatarText: { fontFamily: FONT, fontSize: 13, color: MUTED, marginTop: 8 },
+  locationScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 30 }, locationArt: { width: 140, height: 140, alignItems: 'center', justifyContent: 'center', marginBottom: 24, position: 'relative' }, locationPin: { zIndex: 2 }, locationRing: { position: 'absolute', width: 100, height: 100, borderRadius: 50, borderWidth: 2, borderColor: BLUE + '30' }, locationRingOuter: { position: 'absolute', width: 140, height: 140, borderRadius: 70, borderWidth: 1.5, borderColor: BLUE + '15' }, locationTitle: { fontFamily: FONT, fontSize: 26, fontWeight: '900', color: INK, letterSpacing: -.8 }, locationCopy: { fontFamily: FONT, fontSize: 15, color: '#5b6575', lineHeight: 23, textAlign: 'center', marginTop: 10, marginBottom: 28 }, locationPerks: { alignSelf: 'stretch', gap: 14, marginBottom: 32 }, locationPerk: { flexDirection: 'row', alignItems: 'center', gap: 12 }, locationPerkText: { fontFamily: FONT, fontSize: 15, color: INK, fontWeight: '500' }, locationButton: { alignSelf: 'stretch', height: 61, borderRadius: 18 },
   bookingHeader: { height: 76, marginTop: 20, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e4e7ec', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 12 }, bookingBack: { borderRadius: 24, backgroundColor: '#f3f6fa', width: 44, height: 44, flexShrink: 0 }, bookingHeaderText: { flex: 1 }, bookingHeaderTitle: { fontFamily: FONT, color: '#101a2e', fontSize: 24, fontWeight: '900', letterSpacing: -.8, lineHeight: 30 }, bookingHeaderSubtitle: { fontFamily: FONT, color: '#758197', fontSize: 14, fontWeight: '400', lineHeight: 19 }, choiceBody: { padding: 20 }, choiceLead: { fontFamily: FONT, fontSize: 16, color: '#758197', lineHeight: 24, marginBottom: 18 }, accountChoice: { minHeight: 146, borderWidth: 1.5, borderColor: '#e0e5ed', borderRadius: 25, backgroundColor: '#fff', padding: 19, flexDirection: 'row', marginBottom: 14, position: 'relative', gap: 15 }, selectedChoice: { borderColor: BLUE, backgroundColor: '#e8f2ff' }, choiceIcon: { height: 50, width: 50, flexShrink: 0, borderRadius: 15, backgroundColor: '#f1f4f8', alignItems: 'center', justifyContent: 'center' }, choiceIconSelected: { backgroundColor: BLUE }, choiceCopy: { flex: 1 }, choiceTitle: { fontFamily: FONT, fontSize: 20, fontWeight: '500', color: '#10182c', lineHeight: 25 }, choiceSubtitle: { fontFamily: FONT, fontSize: 16, color: BLUE, marginTop: 2 }, choiceText: { fontFamily: FONT, fontSize: 14, color: '#758197', lineHeight: 20, marginTop: 9 }, choiceCheck: { position: 'absolute', right: 17, top: 18, width: 31, height: 31, borderRadius: 16, backgroundColor: BLUE, color: '#fff', fontFamily: FONT, fontSize: 19, fontWeight: '700', textAlign: 'center', paddingTop: 4 }, tip: { padding: 15, backgroundColor: '#f8fafc', borderRadius: 18, flexDirection: 'row', gap: 11, alignItems: 'flex-start' }, tipText: { flex: 1, color: '#748097', fontSize: 14, fontFamily: FONT, lineHeight: 20 }, bottomButton: { backgroundColor: '#fff', padding: 14, borderTopLeftRadius: 24, borderTopRightRadius: 24, shadowColor: '#aebcd1', shadowOpacity: .18, shadowRadius: 10, elevation: 8 },
   appHeader: { height: 76, marginTop: 20, backgroundColor: '#fff', paddingHorizontal: 22, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 2, borderBottomColor: '#d9e8fa', shadowColor: '#7aa1cc', shadowOpacity: .25, shadowRadius: 3, elevation: 4 }, appBrand: { flexDirection: 'row', alignItems: 'center' }, appBrandText: { color: '#0955c7', fontFamily: FONT, fontWeight: '900', fontSize: 20, letterSpacing: -.6 }, homeContent: { padding: 19, paddingBottom: 90 }, micro: { fontFamily: FONT, color: '#7f8898', fontWeight: '500', fontSize: 12, letterSpacing: .6 }, chip: { backgroundColor: '#e1e5ea', minWidth: 66, height: 40, paddingHorizontal: 18, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }, chipActive: { backgroundColor: BLUE, shadowColor: BLUE, shadowOpacity: .25, shadowRadius: 5, elevation: 4 }, chipText: { fontFamily: FONT, color: '#4e5766', fontWeight: '500', fontSize: 14 }, chipTextActive: { color: '#fff' }, sectionTitle: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, marginBottom: 14 }, sectionTitleText: { fontFamily: FONT, fontSize: 20, color: INK, fontWeight: '900', letterSpacing: -.6 }, sectionAction: { color: BLUE, fontFamily: FONT, fontWeight: '700', fontSize: 14 },
   activeOrderCard: { backgroundColor: '#fff', borderRadius: 18, borderWidth: 1.5, borderColor: '#e0e4e9', padding: 18, marginBottom: 12 }, activeOrderTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }, activeOrderService: { fontFamily: FONT, color: INK, fontSize: 17, fontWeight: '900' }, activeOrderProvider: { fontFamily: FONT, color: '#758197', fontSize: 13, marginTop: 3 }, activeOrderBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }, activeOrderSlot: { fontFamily: FONT, color: '#758197', fontSize: 13 }, activeOrderSlotIcon: { color: '#758197' }, activeOrderTotal: { fontFamily: FONT, color: INK, fontWeight: '900', fontSize: 15 },
+  homeHeader: { marginTop: 20, marginBottom: 8 }, homeHeaderTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }, homeHeaderLeft: { flex: 1 }, homeGreeting: { fontFamily: FONT, fontSize: 24, fontWeight: '900', color: INK, letterSpacing: -.8 }, homeLocationRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }, homeLocationText: { fontFamily: FONT, fontSize: 14, color: MUTED, fontWeight: '500' }, homeNotificationButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: SOFT, alignItems: 'center', justifyContent: 'center', position: 'relative' }, homeNotificationBadge: { position: 'absolute', top: 10, right: 12, width: 8, height: 8, borderRadius: 4, backgroundColor: '#e74c3c', borderWidth: 1.5, borderColor: SOFT }, homeSearchBar: { flexDirection: 'row', alignItems: 'center', gap: 12, height: 50, borderRadius: 14, backgroundColor: '#e4e9f0', paddingHorizontal: 16, marginTop: 18 }, homeSearchPlaceholder: { fontFamily: FONT, fontSize: 15, color: MUTED },
   promoCard: { backgroundColor: '#e8f2ff', borderRadius: 20, padding: 22, marginTop: 8 }, promoLabel: { fontFamily: FONT, color: BLUE, fontWeight: '700', fontSize: 15 }, promoTitle: { fontFamily: FONT, color: INK, fontWeight: '900', fontSize: 17, marginTop: 10 }, promoCopy: { fontFamily: FONT, color: '#596476', fontSize: 14, lineHeight: 20, marginTop: 6 }, promoButton: { alignSelf: 'flex-start', backgroundColor: BLUE, borderRadius: 12, paddingHorizontal: 18, paddingVertical: 10, marginTop: 14 }, promoButtonText: { fontFamily: FONT, color: '#fff', fontWeight: '700', fontSize: 14 },
   viewMoreButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 52, borderRadius: 16, borderWidth: 1.5, borderColor: '#e0e4e9', backgroundColor: '#fff' }, viewMoreText: { fontFamily: FONT, color: BLUE, fontWeight: '700', fontSize: 15 },
+  allProvidersHeader: { backgroundColor: '#fff', paddingTop: 20, paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#e4e7ec' }, allProvidersTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }, allProvidersTitle: { fontFamily: FONT, fontSize: 22, fontWeight: '900', color: INK, letterSpacing: -.7 }, allProvidersSearchBar: { flexDirection: 'row', alignItems: 'center', gap: 10, height: 48, borderRadius: 14, backgroundColor: '#e4e9f0', paddingHorizontal: 14 }, allProvidersSearchInput: { flex: 1, fontFamily: FONT, fontSize: 15, color: INK, height: '100%' }, allProvidersBody: { padding: 16, paddingBottom: 90 }, allProvidersCount: { fontFamily: FONT, fontSize: 13, color: MUTED, marginBottom: 14 },
+  allProviderCard: { backgroundColor: '#fff', borderRadius: 18, borderWidth: 1.5, borderColor: '#e0e4e9', overflow: 'hidden', marginBottom: 14 }, allProviderImage: { width: '100%', height: 160, backgroundColor: '#dde6f0' }, allProviderInfo: { padding: 14, gap: 6 }, allProviderNameRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, allProviderName: { fontFamily: FONT, color: INK, fontWeight: '900', fontSize: 17, flex: 1 }, allProviderRating: { color: '#ff9800', fontFamily: FONT, fontWeight: '900', fontSize: 14 }, allProviderLocation: { fontFamily: FONT, color: MUTED, fontSize: 13 }, allProviderServices: { flexDirection: 'row', gap: 8, marginTop: 4 }, allProviderServiceChip: { backgroundColor: '#e8f2ff', borderRadius: 8, paddingHorizontal: 9, paddingVertical: 4 }, allProviderServiceText: { fontFamily: FONT, fontSize: 12, color: BLUE, fontWeight: '600' }, allProviderFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }, allProviderTurnaround: { fontFamily: FONT, color: MUTED, fontSize: 12 }, allProviderPrice: { fontFamily: FONT, color: BLUE_DARK, fontWeight: '800', fontSize: 13 },
+  allProvidersEmpty: { alignItems: 'center', justifyContent: 'center', paddingTop: 80, gap: 14 }, allProvidersEmptyText: { fontFamily: FONT, color: MUTED, fontSize: 16 },
   featuredScroll: { gap: 14, paddingRight: 19 }, featuredCard: { width: 300, backgroundColor: '#fff', borderRadius: 18, borderWidth: 1.5, borderColor: '#e0e4e9', overflow: 'hidden', marginBottom: 14 }, nearbyCard: { backgroundColor: '#fff', borderRadius: 18, borderWidth: 1.5, borderColor: '#e0e4e9', overflow: 'hidden', marginBottom: 14 }, featuredImage: { width: '100%', height: 180, backgroundColor: '#dde6f0' }, featuredInfo: { padding: 14 }, featuredNameRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, featuredName: { fontFamily: FONT, color: INK, fontWeight: '900', fontSize: 16, flex: 1 }, featuredRating: { color: '#ff9800', fontFamily: FONT, fontWeight: '900', fontSize: 14 }, featuredReviews: { color: '#758197', fontWeight: '500' }, featuredMeta: { fontFamily: FONT, color: '#758197', fontSize: 13, marginTop: 4 }, tabBar: { height: 70, backgroundColor: '#fff', flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: 1, borderTopColor: '#ebeff4' }, tab: { alignItems: 'center', justifyContent: 'center', minWidth: 56, gap: 3 }, tabText: { fontFamily: FONT, color: '#8da0bb', fontSize: 10 }, tabTextActive: { color: BLUE, fontWeight: '800' },
   filterBody: { padding: 23, paddingBottom: 128 }, filterTitle: { fontFamily: FONT, fontSize: 20, color: INK, fontWeight: '900', letterSpacing: -.7, marginBottom: 24 }, typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 23 }, typeTile: { height: 54, width: '47%', backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 17, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, typeTileActive: { backgroundColor: '#2178df' }, typeTileText: { fontFamily: FONT, color: '#4f5969', fontWeight: '500', fontSize: 14 }, typeTileTextActive: { color: '#fff' }, typeMark: { color: '#576271' }, typeMarkActive: { color: '#fff' }, filterCard: { height: 148, borderRadius: 17, backgroundColor: '#f0f2f6', padding: 25, marginBottom: 21 }, filterCardTop: { flexDirection: 'row', justifyContent: 'space-between' }, filterLabel: { fontFamily: FONT, fontWeight: '500', color: '#596375', fontSize: 14 }, slider: { marginTop: 30, height: 8, borderRadius: 5, backgroundColor: '#d4d9e0' }, sliderActive: { width: '50%', height: '100%', borderRadius: 5, backgroundColor: BLUE }, sliderKnob: { position: 'absolute', left: '49%', top: -5, width: 18, height: 18, borderRadius: 9, borderWidth: 4, borderColor: BLUE, backgroundColor: '#fff' }, sliderLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 23 }, ratingRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 23 }, ratingBox: { height: 83, width: '31%', borderRadius: 12, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', gap: 6 }, ratingBoxSelected: { backgroundColor: BLUE, shadowColor: BLUE, shadowOpacity: .25, shadowRadius: 6, elevation: 5 }, ratingValue: { fontFamily: FONT, color: '#424c5e', fontWeight: '900', fontSize: 20 }, ratingValueSelected: { color: '#fff' }, ratingDetail: { fontFamily: FONT, color: '#3d4655', fontSize: 12, fontWeight: '500' }, ratingDetailSelected: { color: '#fff' },
   providerBody: { paddingBottom: 136 }, heroImage: { width: '100%', height: 278, backgroundColor: '#bfdbff' }, providerIntro: { backgroundColor: '#fff', borderRadius: 25, marginHorizontal: 23, marginTop: -84, padding: 25, shadowColor: '#7594bc', shadowOpacity: .21, shadowOffset: { width: 0, height: 8 }, shadowRadius: 15, elevation: 5 }, pill: { alignSelf: 'flex-start', paddingHorizontal: 11, paddingVertical: 5, borderRadius: 15, backgroundColor: '#e5f2ff' }, pillText: { fontFamily: FONT, color: '#0063b7', fontSize: 12, letterSpacing: .6, fontWeight: '900' }, providerName: { fontFamily: FONT, color: INK, fontSize: 24, letterSpacing: -.8, fontWeight: '900', marginTop: 9 }, providerMeta: { marginTop: 13, flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap', fontFamily: FONT, color: '#4e596c' }, star: { color: '#ff9b00', fontSize: 25 }, metaStrong: { fontFamily: FONT, fontWeight: '900', color: '#536073' }, turnaround: { fontFamily: FONT, fontSize: 14, fontWeight: '900', color: '#00728a', marginTop: 5 }, sectionHeading: { marginHorizontal: 23, marginTop: 22, color: INK, fontFamily: FONT, fontWeight: '900', fontSize: 20, letterSpacing: -.5 }, headingAccent: { color: BLUE }, serviceInfo: { minHeight: 96, backgroundColor: '#f0f2f6', marginHorizontal: 23, marginTop: 16, borderRadius: 23, padding: 17, flexDirection: 'row', alignItems: 'center', gap: 14 }, serviceIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: '#dcebfb', alignItems: 'center', justifyContent: 'center' }, serviceInfoCopy: { flex: 1 }, serviceInfoTitle: { fontFamily: FONT, color: INK, fontSize: 20, fontWeight: '500' }, serviceInfoDetail: { fontFamily: FONT, color: '#596476', fontSize: 14, lineHeight: 19, marginTop: 4 }, serviceInfoPrice: { fontFamily: FONT, color: '#0062bd', fontWeight: '900', fontSize: 20 }, serviceInfoUnit: { fontSize: 12, color: '#475260', fontWeight: '400' }, aboutCard: { marginHorizontal: 23, marginTop: 18, borderRadius: 22, backgroundColor: '#f0f2f6', padding: 24 }, aboutText: { fontFamily: FONT, color: '#596476', fontSize: 14, lineHeight: 21 }, areaCard: { backgroundColor: '#fff', marginHorizontal: 23, borderRadius: 24, marginTop: 20, padding: 25 }, areaTitle: { fontFamily: FONT, fontWeight: '900', fontSize: 20, color: INK }, addressPill: { alignSelf: 'flex-start', fontFamily: FONT, color: '#596476', fontSize: 12, marginTop: 17, borderRadius: 20, backgroundColor: '#e8ebef', paddingHorizontal: 12, paddingVertical: 5 }, mapArea: { height: 200, borderRadius: 15, backgroundColor: '#d9e5c0', marginTop: 14, alignItems: 'center', justifyContent: 'center' }, mapHome: { color: '#fff', backgroundColor: BLUE, fontSize: 26, height: 43, width: 43, borderRadius: 25, textAlign: 'center', paddingTop: 7, overflow: 'hidden' }, hoursCard: { borderWidth: 1, borderColor: '#cee0ee', borderRadius: 23, backgroundColor: '#edf8fd', margin: 23, padding: 24 }, hoursTitle: { fontFamily: FONT, color: '#00708d', fontWeight: '900', fontSize: 20 }, hoursText: { fontFamily: FONT, color: '#516071', fontSize: 14, lineHeight: 20, marginTop: 12 },
