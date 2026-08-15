@@ -8,9 +8,11 @@
     "scheme": "laundrappmobile",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "com.laundr.app"
     },
     "android": {
+      "package": "com.laundr.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -34,8 +36,14 @@
       "expo-secure-store"
     ],
     "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
-    }
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e05b6ef7-15cc-4072-8997-20914c8eba68"
+      }
+    },
+    "owner": "the-real-mamu"
   }
 }
