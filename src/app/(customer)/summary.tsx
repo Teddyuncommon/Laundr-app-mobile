@@ -33,7 +33,7 @@ export default function SummaryScreen() {
       <BookingHeader
         title="Booking Summary"
         onBack={() => router.back()}
-        step={3}
+        step={4}
       />
       <ScrollView style={styles.flexScroll} contentContainerStyle={styles.summaryBody}>
         {/* Booking Details */}

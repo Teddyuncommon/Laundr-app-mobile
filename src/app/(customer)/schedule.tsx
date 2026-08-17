@@ -31,7 +31,7 @@ export default function ScheduleScreen() {
         title="Schedule"
         subtitle="Pick collection date & time"
         onBack={() => router.back()}
-        step={2}
+        step={3}
       />
       <ScrollView style={styles.flexScroll} contentContainerStyle={styles.scheduleBody}>
         <Text style={styles.scheduleTitle}>Choose a date</Text>

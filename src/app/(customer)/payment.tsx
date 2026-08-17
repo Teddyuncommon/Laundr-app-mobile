@@ -48,7 +48,7 @@ export default function PaymentScreen() {
         title="Payment"
         subtitle="Choose payment method"
         onBack={() => router.back()}
-        step={4}
+        step={5}
       />
       <ScrollView style={styles.flexScroll} contentContainerStyle={styles.paymentBody}>
         {methods.map(method => (

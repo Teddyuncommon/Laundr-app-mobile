@@ -30,7 +30,7 @@ export default function ServiceScreen() {
         <BookingBottom
           label="Continue"
           detail={`Subtotal: ${money(subtotal)}`}
-          onPress={() => router.push('/(customer)/schedule')}
+          onPress={() => router.push('/(customer)/collection')}
         />
       }
     >
